@@ -1,0 +1,44 @@
+#ifndef BATTERY_MONITOR_H
+#define BATTERY_MONITOR_H
+
+#include <windows.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef enum {
+    MODE_DISCONNECTED = 0,
+    MODE_WIRED,
+    MODE_2P4G,
+    MODE_BLUETOOTH
+} ConnectionMode;
+
+typedef struct {
+    ConnectionMode mode;
+    int batteryPercent;       // 0 - 100, or -1 if offline/disconnected
+    int lastKnownPercent;     // Retained last known valid percentage even when asleep/offline
+    BOOL isCharging;          // TRUE if plugged into USB and charging
+    BOOL isSleeping;          // TRUE if dongle present but keyboard asleep/offline
+    WCHAR statusText[128];
+    WCHAR modeName[32];
+    WCHAR stateName[32];      // "Active", "Asleep", "Charging", "Fully Charged", "Offline"
+} URXStatus;
+
+// Initialize hardware monitoring subsystems
+BOOL BatteryMonitor_Init(void);
+
+// Invalidate cached device handles/paths (e.g., when DBT_DEVICEARRIVAL or DBT_DEVICEREMOVECOMPLETE occurs)
+void BatteryMonitor_InvalidateCache(void);
+
+// Query URX Core75 status across Wired -> 2.4G -> Bluetooth
+void BatteryMonitor_Poll(URXStatus *outStatus);
+
+// Cleanup any open handles or resources
+void BatteryMonitor_Cleanup(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // BATTERY_MONITOR_H

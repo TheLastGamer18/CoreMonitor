@@ -1,0 +1,18 @@
+# Compiled binaries and object files
+*.exe
+*.o
+*.obj
+res/*.o
+
+# IDE and Editor directories
+.vscode/
+.idea/
+.vs/
+*.suo
+*.user
+
+# System and temporary files
+Thumbs.db
+Desktop.ini
+*.tmp
+*.log
