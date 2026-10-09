@@ -388,9 +388,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 BatteryMonitor_InvalidateCache();
             } else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND) {
                 // PC resumed from sleep:
-                // Give USB controllers and 2.4G dongles 1.5s to cleanly re-establish RF link
+                // Give USB controllers and 2.4G dongles 2.5s to cleanly re-establish RF link
                 BatteryMonitor_InvalidateCache();
-                SetTimer(hWnd, IDT_POLL_TIMER, 1500, NULL);
+                SetTimer(hWnd, IDT_POLL_TIMER, 2500, NULL);
             }
             break;
         }
