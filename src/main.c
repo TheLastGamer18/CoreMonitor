@@ -468,7 +468,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             _snwprintf(cRateStr, 32, L"~%.1f%% / hour", cRate);
 
             // Card 1: Battery & Runtime
-            int card1H = SC(112);
+            int card1H = SC(92);
             DrawCardPanel(memDC, pad, curY, cardW, card1H, colCardBg, colBorder, SC(8));
             SelectObject(memDC, hFontSecHdr);
             SetTextColor(memDC, colHeader);
@@ -479,7 +479,6 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             int innerW = cardW - SC(24);
             int innerX = pad + SC(12);
 
-            WCHAR pwrStr[48] = L"Auto (Hardware managed)";
             WCHAR modeDisplay[64];
             if (s_currentStatus.mode == MODE_2P4G && BatteryMonitor_IsRadioUnreachable()) {
                 wcscpy(modeDisplay, L"2.4GHz (Keyboard Off / Silent)");
@@ -491,7 +490,6 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Connection Mode", modeDisplay, colTextSec, colTextPri, hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Estimated Remaining", estBuf, colTextSec, colTextPri, hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, L"Full Endurance", enduranceStr, colTextSec, colTextPri, hFontRow);
-            DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Power Management", pwrStr, colTextSec, colTextPri, hFontRow);
 
             curY += card1H + SC(10);
 
@@ -663,7 +661,7 @@ static void ShowDetailsDialog(HWND hWnd) {
     if (dpi <= 0) dpi = 96;
 
     int clientW = MulDiv(400, dpi, 96);
-    int clientH = MulDiv(452, dpi, 96);
+    int clientH = MulDiv(432, dpi, 96);
 
     RECT rc = { 0, 0, clientW, clientH };
     AdjustWindowRectEx(&rc, WS_CAPTION | WS_SYSMENU, FALSE, 0);
