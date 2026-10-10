@@ -6,6 +6,19 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 
 ---
 
+## Screenshots
+
+| In Taskbar (with Battery Number) | In Taskbar (with Keyboard Icon) |
+| :---: | :---: |
+| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443068854636585/image.png?ex=6acb74b6&is=6aca2336&hm=70aa990fef6f02312158ab48f6f6594584cc5351e9a540023f8147f6bf85923d&" height="180" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558446150942457927/image.png?ex=6acb7794&is=6aca2614&hm=d53d346b9a168fe4e025fa4eddfc474df3dc9f0302f9fb181703a2ee5c5e360e&" height="180" style="vertical-align: middle;"> |
+
+
+| Right-Click Menu | Battery Details & Statistics Menu |
+| :---: | :---: |
+| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443069366603848/image.png?ex=6acb74b6&is=6aca2336&hm=63317789c9a134ab0eece2afd94238058f72f063a0415ac1166ac02762e6c9a7&" height="450" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443069798355014/image.png?ex=6acb74b6&is=6aca2336&hm=e71ed5b3be81b51de869a2b46373e93a61e78c39f956db826f7a46217af93090&" height="450" style="vertical-align: middle;"> |
+
+---
+
 ## Highlights
 
 - **Connection Modes:** Tracks 2.4 GHz wireless (USB dongle), wired USB, and Bluetooth (BLE).
