@@ -87,6 +87,7 @@ static const DEVPROPKEY PKEY_Device_FriendlyName = {
 // Cached device interface paths for instant, zero-overhead querying
 static char s_cachedWiredPath[MAX_PATH * 2] = {0};
 static char s_cached2P4GPath[MAX_PATH * 2] = {0};
+static int s_cachedSleepTimerMinutes = 0;
 static int s_lastKnownBattery = -1;
 
 BOOL BatteryMonitor_Init(void) {
@@ -115,7 +116,12 @@ static int s_consecutiveFailures = 0;
 void BatteryMonitor_InvalidateCache(void) {
     s_cachedWiredPath[0] = '\0';
     s_cached2P4GPath[0] = '\0';
+    s_cachedSleepTimerMinutes = 0;
     s_consecutiveFailures = 0;
+}
+
+int BatteryMonitor_GetSleepTimerMinutes(void) {
+    return (s_cachedSleepTimerMinutes > 0) ? s_cachedSleepTimerMinutes : 3;
 }
 
 void BatteryMonitor_Cleanup(void) {
@@ -130,9 +136,9 @@ void BatteryMonitor_Cleanup(void) {
     }
 }
 
-// Single-attempt VIA raw HID query for battery percentage
-// Non-blocking overlapped I/O with conservative, safe timeouts
-static int QueryViaBatteryOnce(const char *devicePath) {
+// Unified VIA Raw HID read helper for custom values (id_custom_get_value = 0x08)
+// Strictly read-only, non-blocking overlapped I/O with concise, safe timeouts
+static int QueryViaCustomValue(const char *devicePath, unsigned char channel, unsigned char valueId) {
     if (!devicePath || devicePath[0] == '\0') return -1;
 
     HANDLE hDev = CreateFileA(devicePath,
@@ -151,15 +157,14 @@ static int QueryViaBatteryOnce(const char *devicePath) {
         return -1;
     }
 
-    int battery = -1;
+    int result = -1;
 
-    // Standard QMK VIA Raw HID query:
-    // ReportID: 0x00, id_custom_get_value: 0x08, channel: 0x00, value_id: 0x07 (Battery)
+    // ReportID: 0x00, id_custom_get_value: 0x08, channel, valueId
     unsigned char tx[33] = {0};
     tx[0] = 0x00;
     tx[1] = 0x08;
-    tx[2] = 0x00;
-    tx[3] = 0x07;
+    tx[2] = channel;
+    tx[3] = valueId;
 
     DWORD written = 0;
     BOOL writeOk = FALSE;
@@ -167,14 +172,13 @@ static int QueryViaBatteryOnce(const char *devicePath) {
     if (wr) {
         writeOk = TRUE;
     } else if (GetLastError() == ERROR_IO_PENDING) {
-        if (WaitForSingleObject(ov.hEvent, 300) == WAIT_OBJECT_0) {
+        if (WaitForSingleObject(ov.hEvent, 150) == WAIT_OBJECT_0) {
             writeOk = GetOverlappedResult(hDev, &ov, &written, FALSE);
         } else {
             CancelIo(hDev);
         }
     }
 
-    // Only attempt read if write completed successfully
     if (writeOk) {
         ResetEvent(ov.hEvent);
         unsigned char rx[65] = {0};
@@ -183,9 +187,8 @@ static int QueryViaBatteryOnce(const char *devicePath) {
         if (rd) {
             GetOverlappedResult(hDev, &ov, &bytes, FALSE);
         } else if (GetLastError() == ERROR_IO_PENDING) {
-            // 2.4GHz RF turnaround after idle state takes up to ~140ms.
-            // 350ms gives plenty of headroom while completing safely without hanging.
-            if (WaitForSingleObject(ov.hEvent, 350) == WAIT_OBJECT_0) {
+            // 200ms is ample turnaround for 2.4GHz RF and SPI
+            if (WaitForSingleObject(ov.hEvent, 200) == WAIT_OBJECT_0) {
                 GetOverlappedResult(hDev, &ov, &bytes, FALSE);
             } else {
                 CancelIo(hDev);
@@ -193,34 +196,50 @@ static int QueryViaBatteryOnce(const char *devicePath) {
         }
 
         if (bytes >= 4) {
-            if (rx[0] == 0x00 && rx[1] == 0x08 && rx[2] == 0x00 && rx[3] == 0x07) {
-                battery = rx[4];
-            } else if (rx[0] == 0x08 && rx[1] == 0x00 && rx[2] == 0x07) {
-                battery = rx[3];
+            if (rx[0] == 0x00 && rx[1] == 0x08 && rx[2] == channel && rx[3] == valueId) {
+                result = (int)rx[4];
+            } else if (rx[0] == 0x08 && rx[1] == channel && rx[2] == valueId) {
+                result = (int)rx[3];
             }
-            if (battery > 100) battery = 100;
-            if (battery < 0) battery = 0;
         }
     }
 
     CloseHandle(ov.hEvent);
     CloseHandle(hDev);
-    return battery;
+    return result;
 }
 
-// Queries VIA battery with a fast retry to absorb transient RF packet collisions
+// Queries VIA battery percentage (Channel 0x00, Value 0x07) with a fast retry
 static int QueryViaBattery(const char *devicePath) {
-    int b = QueryViaBatteryOnce(devicePath);
+    int b = QueryViaCustomValue(devicePath, 0x00, 0x07);
     if (b < 0) {
-        // Retry once after 60ms in case a 2.4GHz RF packet collided with active keystrokes
-        Sleep(60);
-        b = QueryViaBatteryOnce(devicePath);
+        // Fast retry after 40ms to absorb transient RF packet collisions during active typing
+        Sleep(40);
+        b = QueryViaCustomValue(devicePath, 0x00, 0x07);
     }
+    if (b > 100) b = 100;
+    if (b < 0) b = -1;
     return b;
 }
 
+// Queries configured sleep timer from firmware (Channel 0x00, Value 0x04)
+// Maps firmware index (0: 1m, 1: 3m, 2: 10m, 3: 30m) or direct minutes to minute value
+static int QueryViaSleepTimer(const char *devicePath) {
+    int val = QueryViaCustomValue(devicePath, 0x00, 0x04);
+    if (val < 0) return -1;
+    switch (val) {
+        case 0: return 1;
+        case 1: return 3;
+        case 2: return 10;
+        case 3: return 30;
+        default:
+            if (val == 1 || val == 3 || val == 10 || val == 30) return val;
+            return 3;
+    }
+}
+
 // Scans HID devices matching URX VID and target PID
-static int ScanURX_HID(USHORT targetPid, BOOL *outDeviceFound, char *outPath, DWORD pathMax) {
+static int ScanURX_HID(USHORT targetPid, BOOL *outDeviceFound, char *outPath, DWORD pathMax, BOOL queryBattery) {
     if (!s_HidD_GetHidGuid) return -1;
 
     GUID hidGuid;
@@ -270,7 +289,9 @@ static int ScanURX_HID(USHORT targetPid, BOOL *outDeviceFound, char *outPath, DW
                                 strncpy(devPathCopy, detail->DevicePath, sizeof(devPathCopy) - 1);
                                 free(detail);
 
-                                resultBattery = QueryViaBattery(devPathCopy);
+                                if (queryBattery) {
+                                    resultBattery = QueryViaBattery(devPathCopy);
+                                }
                                 break;
                             }
                             s_HidD_FreePreparsedData(preparsed);
@@ -320,11 +341,12 @@ static int ScanURX_Bluetooth(void) {
     return battery;
 }
 
-void BatteryMonitor_Poll(URXStatus *outStatus) {
+void BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery) {
     if (!outStatus) return;
     memset(outStatus, 0, sizeof(URXStatus));
     outStatus->batteryPercent = -1;
     outStatus->lastKnownPercent = s_lastKnownBattery;
+    outStatus->sleepTimerMinutes = BatteryMonitor_GetSleepTimerMinutes();
 
     // 1. Priority 1: Check Wired Mode (VID 0x36B0, PID 0x3130)
     int wiredBatt = -1;
@@ -342,17 +364,22 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
     }
 
     if (!wiredFound) {
-        wiredBatt = ScanURX_HID(URX_PID_WIRED, &wiredFound, s_cachedWiredPath, sizeof(s_cachedWiredPath));
+        wiredBatt = ScanURX_HID(URX_PID_WIRED, &wiredFound, s_cachedWiredPath, sizeof(s_cachedWiredPath), TRUE);
     }
 
     if (wiredFound && wiredBatt >= 0) {
         s_consecutiveFailures = 0;
         s_lastKnownBattery = wiredBatt;
+        if (s_cachedSleepTimerMinutes <= 0 && s_cachedWiredPath[0] != '\0') {
+            int st = QueryViaSleepTimer(s_cachedWiredPath);
+            if (st > 0) s_cachedSleepTimerMinutes = st;
+        }
         outStatus->mode = MODE_WIRED;
         outStatus->batteryPercent = wiredBatt;
         outStatus->lastKnownPercent = wiredBatt;
         outStatus->isCharging = (wiredBatt < 100);
         outStatus->isSleeping = FALSE;
+        outStatus->sleepTimerMinutes = BatteryMonitor_GetSleepTimerMinutes();
         wcscpy(outStatus->modeName, L"Wired USB");
         if (outStatus->isCharging) {
             wcscpy(outStatus->stateName, L"Charging");
@@ -368,12 +395,76 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
     int dongleBatt = -1;
     BOOL dongleFound = FALSE;
 
-    if (s_cached2P4GPath[0] != '\0') {
-        dongleBatt = QueryViaBattery(s_cached2P4GPath);
-        if (dongleBatt >= 0) {
-            dongleFound = TRUE;
-        } else {
-            // Check if device still exists even if query timed out (asleep)
+    if (allowWirelessQuery) {
+        if (s_cached2P4GPath[0] != '\0') {
+            dongleBatt = QueryViaBattery(s_cached2P4GPath);
+            if (dongleBatt >= 0) {
+                dongleFound = TRUE;
+            } else {
+                // Check if device still exists even if query timed out (asleep or off)
+                HANDLE hTest = CreateFileA(s_cached2P4GPath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+                if (hTest != INVALID_HANDLE_VALUE) {
+                    dongleFound = TRUE;
+                    CloseHandle(hTest);
+                } else {
+                    s_cached2P4GPath[0] = '\0';
+                }
+            }
+        }
+
+        if (!dongleFound) {
+            dongleBatt = ScanURX_HID(URX_PID_2P4G, &dongleFound, s_cached2P4GPath, sizeof(s_cached2P4GPath), TRUE);
+        }
+
+        if (dongleFound) {
+            outStatus->mode = MODE_2P4G;
+            wcscpy(outStatus->modeName, L"2.4GHz Wireless");
+
+            if (dongleBatt >= 0) {
+                s_consecutiveFailures = 0;
+                s_lastKnownBattery = dongleBatt;
+                if (s_cachedSleepTimerMinutes <= 0 && s_cached2P4GPath[0] != '\0') {
+                    int st = QueryViaSleepTimer(s_cached2P4GPath);
+                    if (st > 0) s_cachedSleepTimerMinutes = st;
+                }
+                outStatus->sleepTimerMinutes = BatteryMonitor_GetSleepTimerMinutes();
+                outStatus->batteryPercent = dongleBatt;
+                outStatus->lastKnownPercent = dongleBatt;
+                outStatus->isSleeping = FALSE;
+                outStatus->isCharging = FALSE;
+
+                wcscpy(outStatus->stateName, L"Active");
+                _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", dongleBatt);
+            } else {
+                s_consecutiveFailures++;
+                outStatus->sleepTimerMinutes = BatteryMonitor_GetSleepTimerMinutes();
+                // Filter out single-poll radio latency / transient RF collisions:
+                if (s_consecutiveFailures < 2 && s_lastKnownBattery >= 0) {
+                    outStatus->batteryPercent = s_lastKnownBattery;
+                    outStatus->lastKnownPercent = s_lastKnownBattery;
+                    outStatus->isCharging = FALSE;
+                    outStatus->isSleeping = FALSE;
+                    wcscpy(outStatus->stateName, L"Active");
+                    _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", s_lastKnownBattery);
+                } else {
+                    outStatus->batteryPercent = -1;
+                    outStatus->lastKnownPercent = s_lastKnownBattery;
+                    outStatus->isCharging = FALSE;
+                    outStatus->isSleeping = TRUE;
+                    wcscpy(outStatus->stateName, L"Asleep");
+
+                    if (s_lastKnownBattery >= 0) {
+                        _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [Asleep - 2.4GHz]", s_lastKnownBattery);
+                    } else {
+                        _snwprintf(outStatus->statusText, 128, L"URX Core75: Asleep - [2.4GHz]");
+                    }
+                }
+            }
+            return;
+        }
+    } else {
+        // Wireless queries suppressed: check dongle USB presence with 0 access (NO over-the-air RF packet sent!)
+        if (s_cached2P4GPath[0] != '\0') {
             HANDLE hTest = CreateFileA(s_cached2P4GPath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
             if (hTest != INVALID_HANDLE_VALUE) {
                 dongleFound = TRUE;
@@ -382,53 +473,19 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
                 s_cached2P4GPath[0] = '\0';
             }
         }
-    }
 
-    if (!dongleFound) {
-        dongleBatt = ScanURX_HID(URX_PID_2P4G, &dongleFound, s_cached2P4GPath, sizeof(s_cached2P4GPath));
-    }
-
-    if (dongleFound) {
-        outStatus->mode = MODE_2P4G;
-        wcscpy(outStatus->modeName, L"2.4GHz Wireless");
-
-        if (dongleBatt >= 0) {
-            s_consecutiveFailures = 0;
-            s_lastKnownBattery = dongleBatt;
-            outStatus->batteryPercent = dongleBatt;
-            outStatus->lastKnownPercent = dongleBatt;
-            outStatus->isSleeping = FALSE;
-            outStatus->isCharging = FALSE;
-
-            wcscpy(outStatus->stateName, L"Active");
-            _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", dongleBatt);
-        } else {
-            s_consecutiveFailures++;
-            // Filter out single-poll radio latency / transient RF collisions:
-            // Keyboard remains Active with last known battery until 2 consecutive polling cycles fail
-            if (s_consecutiveFailures < 2 && s_lastKnownBattery >= 0) {
-                outStatus->batteryPercent = s_lastKnownBattery;
-                outStatus->lastKnownPercent = s_lastKnownBattery;
-                outStatus->isCharging = FALSE;
-                outStatus->isSleeping = FALSE;
-                wcscpy(outStatus->stateName, L"Active");
-                _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", s_lastKnownBattery);
-            } else {
-                // Dongle plugged in, but keyboard didn't respond for multiple cycles (asleep or turned off)
-                outStatus->batteryPercent = -1;
-                outStatus->lastKnownPercent = s_lastKnownBattery;
-                outStatus->isCharging = FALSE;
-                outStatus->isSleeping = TRUE;
-                wcscpy(outStatus->stateName, L"Asleep");
-
-                if (s_lastKnownBattery >= 0) {
-                    _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [Asleep - 2.4GHz]", s_lastKnownBattery);
-                } else {
-                    _snwprintf(outStatus->statusText, 128, L"URX Core75: Asleep - [2.4GHz]");
-                }
-            }
+        if (!dongleFound) {
+            ScanURX_HID(URX_PID_2P4G, &dongleFound, s_cached2P4GPath, sizeof(s_cached2P4GPath), FALSE);
         }
-        return;
+
+        if (dongleFound) {
+            outStatus->mode = MODE_2P4G;
+            wcscpy(outStatus->modeName, L"2.4GHz Wireless");
+            outStatus->batteryPercent = s_lastKnownBattery;
+            outStatus->lastKnownPercent = s_lastKnownBattery;
+            outStatus->sleepTimerMinutes = BatteryMonitor_GetSleepTimerMinutes();
+            return;
+        }
     }
 
     s_consecutiveFailures = 0;
@@ -442,6 +499,7 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
         outStatus->lastKnownPercent = btBatt;
         outStatus->isSleeping = FALSE;
         outStatus->isCharging = FALSE;
+        outStatus->sleepTimerMinutes = BatteryMonitor_GetSleepTimerMinutes();
         wcscpy(outStatus->modeName, L"Bluetooth (BLE)");
         wcscpy(outStatus->stateName, L"Active");
         _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [Bluetooth]", btBatt);
@@ -454,6 +512,7 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
     outStatus->lastKnownPercent = s_lastKnownBattery;
     outStatus->isCharging = FALSE;
     outStatus->isSleeping = FALSE;
+    outStatus->sleepTimerMinutes = BatteryMonitor_GetSleepTimerMinutes();
     wcscpy(outStatus->modeName, L"Disconnected");
     wcscpy(outStatus->stateName, L"Offline");
     _snwprintf(outStatus->statusText, 128, L"URX Core75: Disconnected");

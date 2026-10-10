@@ -2,13 +2,16 @@
 
 An ultra-lightweight, dedicated Windows system tray battery monitor built specifically for the URX Core75 Keyboard.
 
-No heavy runtimes, no background bloat. Compiles to a single standalone executable under 55 KB that uses ~1.8 MB RAM and 0.0% CPU.
+No heavy runtimes, no background bloat. Compiles to a single standalone executable under 60 KB that uses ~1 MB RAM and 0.0% CPU.
 
 ---
 
 ## Highlights
 
 - **Connection Modes:** Tracks 2.4 GHz wireless (USB dongle), wired USB, and Bluetooth (BLE).
+- **Firmware-Synced Sleep Protection:**
+  - Queries sleep timeout directly from firmware via QMK VIA Raw HID.
+  - Upon waking up, immediately update the tray icon, querying fresh battery telemetry.
 - **Tray Icon:**
   - Circular battery ring with an active pulse when charging.
   - Option to show either the keyboard icon or a live percentage number.
@@ -18,9 +21,9 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
   - **Longevity (85%):** Notifies you to unplug and preserve battery health.
   - **Full (100%):** Confirms the keyboard is fully charged.
   - Alerts trigger once per cycle to prevent notification spam.
-- **Runtime Stats:** Learns your battery discharge rate and estimates remaining usage hours.
+- **Runtime Stats & Details:** Learns discharge rates, estimates remaining hours, and displays live firmware settings.
 - **Hardware Safe:**
-  - Read-only memory queries (no EEPROM writes, zero flash wear).
+  - Strictly read-only memory queries.
   - Pauses polling automatically when Windows is locked or monitors go to sleep.
   - Works alongside VIA Web Configurator without device conflicts.
 

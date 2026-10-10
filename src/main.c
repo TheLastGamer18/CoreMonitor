@@ -51,6 +51,11 @@ static UINT s_uTaskbarRestartMsg = 0;
 static float s_breathPhase = 0.0f;
 static BOOL s_isAnimating = FALSE;
 static HDEVNOTIFY s_hDevNotify = NULL;
+static DWORD s_lastKeyboardInputTick = 0;
+static DWORD s_lastRadioQueryTick = 0;
+static BOOL s_isResumingFromSuspend = FALSE;
+static HANDLE s_cachedUrxKeyboardDevice = NULL;
+static HANDLE s_cachedNonUrxKeyboardDevice = NULL;
 
 typedef enum {
     APPMODE_DEFAULT = 0,
@@ -442,7 +447,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             _snwprintf(cRateStr, 32, L"~%.1f%% / hour", cRate);
 
             // Card 1: Battery & Runtime
-            int card1H = SC(92);
+            int card1H = SC(112);
             DrawCardPanel(memDC, pad, curY, cardW, card1H, colCardBg, colBorder, SC(8));
             SelectObject(memDC, hFontSecHdr);
             SetTextColor(memDC, colHeader);
@@ -453,9 +458,14 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             int innerW = cardW - SC(24);
             int innerX = pad + SC(12);
 
+            WCHAR sleepStr[48];
+            int sleepMin = (s_currentStatus.sleepTimerMinutes > 0) ? s_currentStatus.sleepTimerMinutes : 3;
+            _snwprintf(sleepStr, 48, L"%d min (Firmware synced)", sleepMin);
+
             DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Connection Mode", s_currentStatus.modeName, colTextSec, colTextPri, hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Estimated Remaining", estBuf, colTextSec, colTextPri, hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, L"Full Endurance", enduranceStr, colTextSec, colTextPri, hFontRow);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Sleep Timeout", sleepStr, colTextSec, colTextPri, hFontRow);
 
             curY += card1H + SC(10);
 
@@ -622,7 +632,7 @@ static void ShowDetailsDialog(HWND hWnd) {
     if (dpi <= 0) dpi = 96;
 
     int clientW = MulDiv(400, dpi, 96);
-    int clientH = MulDiv(430, dpi, 96);
+    int clientH = MulDiv(452, dpi, 96);
 
     RECT rc = { 0, 0, clientW, clientH };
     AdjustWindowRectEx(&rc, WS_CAPTION | WS_SYSMENU, FALSE, 0);
@@ -657,7 +667,62 @@ static void ShowDetailsDialog(HWND hWnd) {
 }
 
 static void PollAndUpdate(void) {
-    BatteryMonitor_Poll(&s_currentStatus);
+    DWORD now = GetTickCount();
+    int sleepMin = BatteryMonitor_GetSleepTimerMinutes();
+    DWORD sleepMs = (DWORD)sleepMin * 60 * 1000;
+
+    // Check if user has typed strictly after the last 2.4G RF packet was sent
+    BOOL userTypedSinceLastQuery = (s_lastRadioQueryTick == 0) ||
+        ((s_lastKeyboardInputTick != s_lastRadioQueryTick) &&
+         ((DWORD)(s_lastKeyboardInputTick - s_lastRadioQueryTick) < 0x80000000));
+
+    BOOL allowWirelessQuery = TRUE;
+    BOOL isSleeping = FALSE;
+
+    if (s_currentStatus.mode == MODE_2P4G) {
+        if (s_currentStatus.isSleeping) {
+            // Keyboard is already asleep: keep radio completely silent to avoid waking it
+            allowWirelessQuery = FALSE;
+            isSleeping = TRUE;
+        } else if (!userTypedSinceLastQuery) {
+            // User has not pressed any key since the last query.
+            // Radio silence: do NOT send over-the-air RF packets to let keyboard sleep!
+            allowWirelessQuery = FALSE;
+
+            DWORD radioIdleMs = now - s_lastRadioQueryTick;
+            if (radioIdleMs >= sleepMs) {
+                // Radio silence has reached the keyboard firmware sleep timeout
+                isSleeping = TRUE;
+            }
+        }
+    }
+
+    BatteryMonitor_Poll(&s_currentStatus, allowWirelessQuery);
+
+    if (s_currentStatus.mode == MODE_2P4G) {
+        if (isSleeping) {
+            s_currentStatus.isSleeping = TRUE;
+            s_currentStatus.batteryPercent = -1;
+            wcscpy(s_currentStatus.stateName, L"Asleep");
+            if (s_currentStatus.lastKnownPercent >= 0) {
+                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [Asleep - 2.4GHz]", s_currentStatus.lastKnownPercent);
+            } else {
+                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: Asleep - [2.4GHz]");
+            }
+        } else if (!allowWirelessQuery && !s_currentStatus.isSleeping) {
+            // Quiet countdown before sleep: maintain last known battery
+            s_currentStatus.batteryPercent = s_currentStatus.lastKnownPercent;
+            wcscpy(s_currentStatus.stateName, L"Active");
+            if (s_currentStatus.lastKnownPercent >= 0) {
+                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", s_currentStatus.lastKnownPercent);
+            }
+        } else if (allowWirelessQuery && s_currentStatus.batteryPercent >= 0) {
+            // Successful over-the-air query performed
+            s_lastRadioQueryTick = now;
+        }
+    } else if (s_currentStatus.mode == MODE_WIRED) {
+        s_lastRadioQueryTick = 0;
+    }
 
     BOOL isDisconnected = (s_currentStatus.mode == MODE_DISCONNECTED);
     int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
@@ -861,6 +926,36 @@ static void ShowContextMenu(HWND hWnd) {
     DestroyMenu(hMenu);
 }
 
+#ifndef RIDI_DEVICENAME
+#define RIDI_DEVICENAME 0x20000007
+#endif
+
+// Determines if raw input event originated from URX Core75 keyboard
+// Uses single-shot handle caching for zero-overhead (<1ns) subsequent lookups
+static BOOL IsURXKeyboardDevice(HANDLE hDevice) {
+    if (!hDevice) return TRUE; // Safe fallback for synthesized/injected keystrokes
+    if (s_cachedUrxKeyboardDevice && hDevice == s_cachedUrxKeyboardDevice) {
+        return TRUE;
+    }
+    if (s_cachedNonUrxKeyboardDevice && hDevice == s_cachedNonUrxKeyboardDevice) {
+        return FALSE;
+    }
+
+    char name[512] = {0};
+    UINT size = sizeof(name);
+    UINT ret = GetRawInputDeviceInfoA(hDevice, RIDI_DEVICENAME, name, &size);
+    if (ret != (UINT)-1 && ret > 0) {
+        if (strstr(name, "36b0") || strstr(name, "36B0")) {
+            s_cachedUrxKeyboardDevice = hDevice;
+            return TRUE;
+        } else {
+            s_cachedNonUrxKeyboardDevice = hDevice;
+            return FALSE;
+        }
+    }
+    return TRUE; // Safe fallback if query failed
+}
+
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == s_uTaskbarRestartMsg && s_uTaskbarRestartMsg != 0) {
         // Explorer restarted: re-register icon
@@ -871,6 +966,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     switch (msg) {
         case WM_CREATE: {
+            // Register for system-wide raw keyboard input (background sink)
+            RAWINPUTDEVICE rid;
+            rid.usUsagePage = 0x01; // HID_USAGE_PAGE_GENERIC
+            rid.usUsage = 0x06;     // HID_USAGE_GENERIC_KEYBOARD
+            rid.dwFlags = RIDEV_INPUTSINK;
+            rid.hwndTarget = hWnd;
+            RegisterRawInputDevices(&rid, 1, sizeof(RAWINPUTDEVICE));
+            s_lastKeyboardInputTick = GetTickCount();
+            s_lastRadioQueryTick = 0;
+
             // Register for hotplug / device change notifications
             DEV_BROADCAST_DEVICEINTERFACE_W filter = {0};
             filter.dbcc_size = sizeof(filter);
@@ -892,8 +997,38 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             break;
         }
 
+        case WM_INPUT: {
+            HRAWINPUT hRaw = (HRAWINPUT)lParam;
+            RAWINPUT raw;
+            UINT dwSize = sizeof(RAWINPUT);
+            if (GetRawInputData(hRaw, RID_INPUT, &raw, &dwSize, sizeof(RAWINPUTHEADER)) != (UINT)-1) {
+                if (raw.header.dwType == RIM_TYPEKEYBOARD) {
+                    if (raw.data.keyboard.Message == WM_KEYDOWN || raw.data.keyboard.Message == WM_SYSKEYDOWN) {
+                        // Multi-keyboard isolation: only track input originating from the URX Core75
+                        if (IsURXKeyboardDevice(raw.header.hDevice)) {
+                            s_lastKeyboardInputTick = GetTickCount();
+                            if (s_currentStatus.isSleeping && s_currentStatus.mode == MODE_2P4G) {
+                                // Keyboard was asleep and user pressed a key: wake up immediately in UI!
+                                s_currentStatus.isSleeping = FALSE;
+                                wcscpy(s_currentStatus.stateName, L"Active");
+                                UpdateTrayIcon();
+                                if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
+                                    InvalidateRect(s_hDetailsWnd, NULL, TRUE);
+                                }
+                                // Give keyboard and 2.4GHz RF link 1500ms of quiet time to finish wake-up keystrokes, then query battery
+                                s_lastRadioQueryTick = 0;
+                                SetTimer(hWnd, IDT_POLL_TIMER, 1500, NULL);
+                            }
+                        }
+                    }
+                }
+            }
+            return DefWindowProcW(hWnd, msg, wParam, lParam);
+        }
+
         case WM_TIMER: {
             if (wParam == IDT_POLL_TIMER) {
+                s_isResumingFromSuspend = FALSE;
                 PollAndUpdate();
             } else if (wParam == IDT_ANIM_TIMER) {
                 // Smooth breathing phase progression (2.5 second breath period)
@@ -905,6 +1040,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             } else if (wParam == IDT_CLICK_TIMER) {
                 KillTimer(hWnd, IDT_CLICK_TIMER);
                 // User performed a genuine single left-click: trigger quick refresh & status balloon
+                s_lastKeyboardInputTick = GetTickCount();
+                s_lastRadioQueryTick = 0;
                 PollAndUpdate();
                 s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
                 wcsncpy(s_nid.szInfoTitle, L"URX Core75 Status", 63);
@@ -920,6 +1057,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_DEVICECHANGE: {
             // Hardware connect/disconnect event occurred!
             if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
+                s_cachedUrxKeyboardDevice = NULL;
+                s_cachedNonUrxKeyboardDevice = NULL;
                 BatteryMonitor_InvalidateCache();
                 // Brief 150ms pause to let Windows PnP finish enumeration, then poll
                 SetTimer(hWnd, IDT_POLL_TIMER, 150, NULL);
@@ -947,11 +1086,17 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_POWERBROADCAST: {
             if (wParam == PBT_APMSUSPEND) {
                 // PC entering sleep: pause polling and invalidate cached device paths
+                s_isResumingFromSuspend = TRUE;
+                s_cachedUrxKeyboardDevice = NULL;
+                s_cachedNonUrxKeyboardDevice = NULL;
                 KillTimer(hWnd, IDT_POLL_TIMER);
                 BatteryMonitor_InvalidateCache();
             } else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND) {
                 // PC resumed from sleep:
                 // Give USB controllers and 2.4G dongles 2.5s to cleanly re-establish RF link
+                s_isResumingFromSuspend = TRUE;
+                s_cachedUrxKeyboardDevice = NULL;
+                s_cachedNonUrxKeyboardDevice = NULL;
                 BatteryMonitor_InvalidateCache();
                 if (!s_isSessionLocked && !s_isDisplayOff) {
                     SetTimer(hWnd, IDT_POLL_TIMER, 2500, NULL);
@@ -970,8 +1115,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                         // Display powered back on or un-dimmed: resume polling
                         s_isDisplayOff = FALSE;
                         if (!s_isSessionLocked) {
-                            BatteryMonitor_InvalidateCache();
-                            SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
+                            // If PC is resuming from actual sleep, preserve the full 2.5s USB stabilization window
+                            if (!s_isResumingFromSuspend) {
+                                BatteryMonitor_InvalidateCache();
+                                SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
+                            }
                         }
                     }
                 }
@@ -1017,6 +1165,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             int wmId = LOWORD(wParam);
             switch (wmId) {
                 case IDM_REFRESH:
+                    s_lastKeyboardInputTick = GetTickCount();
+                    s_lastRadioQueryTick = 0;
+                    s_cachedUrxKeyboardDevice = NULL;
+                    s_cachedNonUrxKeyboardDevice = NULL;
                     BatteryMonitor_InvalidateCache();
                     PollAndUpdate();
                     break;
