@@ -1,4 +1,5 @@
 #include "settings.h"
+#include <stdio.h>
 
 #define REG_SUBKEY L"Software\\CoreMonitor"
 #define RUN_SUBKEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
@@ -100,7 +101,8 @@ void Settings_SetAutostart(BOOL enable) {
             WCHAR exePath[MAX_PATH];
             GetModuleFileNameW(NULL, exePath, MAX_PATH);
             WCHAR quotedPath[MAX_PATH + 4];
-            wsprintfW(quotedPath, L"\"%s\"", exePath);
+            _snwprintf(quotedPath, sizeof(quotedPath) / sizeof(WCHAR), L"\"%s\"", exePath);
+            quotedPath[(sizeof(quotedPath) / sizeof(WCHAR)) - 1] = L'\0';
             RegSetValueExW(hKey, RUN_VALNAME, 0, REG_SZ, (const BYTE*)quotedPath, (wcslen(quotedPath) + 1) * sizeof(WCHAR));
         } else {
             RegDeleteValueW(hKey, RUN_VALNAME);

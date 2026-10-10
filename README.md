@@ -2,7 +2,7 @@
 
 An ultra-lightweight, dedicated Windows system tray battery monitor built specifically for the URX Core75 Keyboard.
 
-No heavy runtimes, no background bloat. Compiles to a single standalone executable under 50 KB that uses ~1.8 MB RAM and 0.0% CPU.
+No heavy runtimes, no background bloat. Compiles to a single standalone executable under 55 KB that uses ~1.8 MB RAM and 0.0% CPU.
 
 ---
 
@@ -47,7 +47,7 @@ build.bat
 Or compile manually:
 ```cmd
 windres -i res\resource.rc -o res\resource.o -I res
-gcc -Os -s -Wall -fno-asynchronous-unwind-tables -fno-ident -mwindows -static-libgcc -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi -lm
+gcc -Os -s -Wall -fmerge-all-constants -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ident -mwindows -static-libgcc -Wl,--gc-sections -Wl,--file-alignment,512 -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi -lm
 ```
 
 ---

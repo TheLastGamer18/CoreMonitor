@@ -205,19 +205,20 @@ static void FormatMinutesToText(int totalMinutes, WCHAR *buf, DWORD maxLen) {
         int days = hours / 24;
         int remHours = hours % 24;
         if (remHours > 0) {
-            wsprintfW(buf, L"~%dd %dh", days, remHours);
+            _snwprintf(buf, maxLen, L"~%dd %dh", days, remHours);
         } else {
-            wsprintfW(buf, L"~%dd", days);
+            _snwprintf(buf, maxLen, L"~%dd", days);
         }
     } else if (hours > 0) {
         if (mins > 0) {
-            wsprintfW(buf, L"~%dh %dm", hours, mins);
+            _snwprintf(buf, maxLen, L"~%dh %dm", hours, mins);
         } else {
-            wsprintfW(buf, L"~%dh", hours);
+            _snwprintf(buf, maxLen, L"~%dh", hours);
         }
     } else {
-        wsprintfW(buf, L"~%dm", mins);
+        _snwprintf(buf, maxLen, L"~%dm", mins);
     }
+    buf[maxLen - 1] = L'\0';
 }
 
 void BatteryStats_FormatRemainingText(
@@ -233,6 +234,7 @@ void BatteryStats_FormatRemainingText(
 
     if (isDisconnected || currentPercent < 0) {
         wcsncpy(outBuffer, L"Offline", bufferCharCount - 1);
+        outBuffer[bufferCharCount - 1] = L'\0';
         return;
     }
 
@@ -244,7 +246,7 @@ void BatteryStats_FormatRemainingText(
             if (BatteryStats_GetChargeTimeToFull(currentPercent, &minsFull)) {
                 WCHAR timeBuf[32];
                 FormatMinutesToText(minsFull, timeBuf, 32);
-                wsprintfW(outBuffer, L"%s to full", timeBuf);
+                _snwprintf(outBuffer, bufferCharCount, L"%s to full", timeBuf);
             } else {
                 wcsncpy(outBuffer, L"Charging...", bufferCharCount - 1);
             }
@@ -253,11 +255,12 @@ void BatteryStats_FormatRemainingText(
             if (BatteryStats_GetChargeTimeTo85(currentPercent, &mins85)) {
                 WCHAR timeBuf[32];
                 FormatMinutesToText(mins85, timeBuf, 32);
-                wsprintfW(outBuffer, L"%s to 85%%", timeBuf);
+                _snwprintf(outBuffer, bufferCharCount, L"%s to 85%%", timeBuf);
             } else {
                 wcsncpy(outBuffer, L"Charging...", bufferCharCount - 1);
             }
         }
+        outBuffer[bufferCharCount - 1] = L'\0';
         return;
     }
 
@@ -267,9 +270,9 @@ void BatteryStats_FormatRemainingText(
         WCHAR timeBuf[32];
         FormatMinutesToText(minsRem, timeBuf, 32);
         if (isSleeping) {
-            wsprintfW(outBuffer, L"%s left (asleep)", timeBuf);
+            _snwprintf(outBuffer, bufferCharCount, L"%s left (asleep)", timeBuf);
         } else {
-            wsprintfW(outBuffer, L"%s remaining", timeBuf);
+            _snwprintf(outBuffer, bufferCharCount, L"%s remaining", timeBuf);
         }
     } else {
         if (isSleeping) {
@@ -278,6 +281,7 @@ void BatteryStats_FormatRemainingText(
             wcsncpy(outBuffer, L"Calculating...", bufferCharCount - 1);
         }
     }
+    outBuffer[bufferCharCount - 1] = L'\0';
 }
 
 double BatteryStats_GetDischargeRatePerHour(void) {
@@ -296,4 +300,8 @@ BOOL BatteryStats_GetEstimatedEnduranceHours(double *outHours) {
     }
     *outHours = 100.0 / s_dischargeRatePerHour;
     return TRUE;
+}
+
+BOOL BatteryStats_IsCalibrated(void) {
+    return s_hasLearnedDischarge;
 }

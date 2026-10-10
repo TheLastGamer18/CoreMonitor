@@ -356,10 +356,10 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
         wcscpy(outStatus->modeName, L"Wired USB");
         if (outStatus->isCharging) {
             wcscpy(outStatus->stateName, L"Charging");
-            wsprintfW(outStatus->statusText, L"URX Core75: %d%% [Wired - Charging]", wiredBatt);
+            _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [Wired - Charging]", wiredBatt);
         } else {
             wcscpy(outStatus->stateName, L"Fully Charged");
-            wsprintfW(outStatus->statusText, L"URX Core75: 100%% [Wired - Fully Charged]");
+            _snwprintf(outStatus->statusText, 128, L"URX Core75: 100%% - [Wired - Fully Charged]");
         }
         return;
     }
@@ -401,7 +401,7 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
             outStatus->isCharging = FALSE;
 
             wcscpy(outStatus->stateName, L"Active");
-            wsprintfW(outStatus->statusText, L"URX Core75: %d%% [2.4GHz Wireless]", dongleBatt);
+            _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", dongleBatt);
         } else {
             s_consecutiveFailures++;
             // Filter out single-poll radio latency / transient RF collisions:
@@ -412,7 +412,7 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
                 outStatus->isCharging = FALSE;
                 outStatus->isSleeping = FALSE;
                 wcscpy(outStatus->stateName, L"Active");
-                wsprintfW(outStatus->statusText, L"URX Core75: %d%% [2.4GHz Wireless]", s_lastKnownBattery);
+                _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", s_lastKnownBattery);
             } else {
                 // Dongle plugged in, but keyboard didn't respond for multiple cycles (asleep or turned off)
                 outStatus->batteryPercent = -1;
@@ -422,9 +422,9 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
                 wcscpy(outStatus->stateName, L"Asleep");
 
                 if (s_lastKnownBattery >= 0) {
-                    wsprintfW(outStatus->statusText, L"URX Core75: %d%% [Asleep - 2.4GHz]", s_lastKnownBattery);
+                    _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [Asleep - 2.4GHz]", s_lastKnownBattery);
                 } else {
-                    wsprintfW(outStatus->statusText, L"URX Core75: Asleep / Offline [2.4GHz]");
+                    _snwprintf(outStatus->statusText, 128, L"URX Core75: Asleep - [2.4GHz]");
                 }
             }
         }
@@ -444,7 +444,7 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
         outStatus->isCharging = FALSE;
         wcscpy(outStatus->modeName, L"Bluetooth (BLE)");
         wcscpy(outStatus->stateName, L"Active");
-        wsprintfW(outStatus->statusText, L"URX Core75: %d%% [Bluetooth]", btBatt);
+        _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [Bluetooth]", btBatt);
         return;
     }
 
@@ -456,5 +456,5 @@ void BatteryMonitor_Poll(URXStatus *outStatus) {
     outStatus->isSleeping = FALSE;
     wcscpy(outStatus->modeName, L"Disconnected");
     wcscpy(outStatus->stateName, L"Offline");
-    wsprintfW(outStatus->statusText, L"URX Core75: Not Connected");
+    _snwprintf(outStatus->statusText, 128, L"URX Core75: Disconnected");
 }

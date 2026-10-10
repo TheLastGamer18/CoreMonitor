@@ -42,6 +42,9 @@ double BatteryStats_GetChargeRatePerHour(void);
 // Returns estimated full-charge endurance in hours based on discharge rate (e.g. 50.0 hours)
 BOOL BatteryStats_GetEstimatedEnduranceHours(double *outHours);
 
+// Returns TRUE if discharge statistics have been calibrated via historical data or runtime learning
+BOOL BatteryStats_IsCalibrated(void);
+
 // Persists learned statistics to registry
 void BatteryStats_Save(void);
 
