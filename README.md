@@ -1,8 +1,6 @@
 # Core Monitor
 
-Version: 0.1.0
-
-An ultra-lightweight, dedicated Windows system tray battery monitor engineered for mechanical keyboards and wireless peripherals, built specifically for the URX Core75.
+An ultra-lightweight, dedicated Windows system tray battery monitor built specifically for the URX Core75 Keyboard.
 
 ---
 
@@ -16,12 +14,12 @@ Written in pure Win32 C, Core Monitor compiles to a single standalone executable
 
 ## Features
 
-### Multi-Mode Connection Tracking
+### 1. Multi-Mode Connection Tracking
 * 2.4 GHz Wireless (USB Dongle): Live battery telemetry queried through the keyboard's QMK VIA raw HID endpoint.
 * Wired USB: Automatic detection with charging status indication.
 * Bluetooth (BLE): Native Windows Bluetooth Battery Service (BAS) reading via SetupAPI.
 
-### Clean System Tray Indicator
+### 2. Clean System Tray Indicator
 * Anti-Aliased Ring Gauge: Circular battery level meter with smooth rounded endcaps and dark circular background track.
 * 75% Mechanical Keyboard Glyph: Crisp central silhouette depicting a 75% keyboard layout with function row, main key block, spacebar, and arrow cluster notch.
 * Color Thresholds:
@@ -33,19 +31,19 @@ Written in pure Win32 C, Core Monitor compiles to a single standalone executable
 * Display DPI Aware: Automatically scales to native small icon sizes (16x16, 20x20, 24x24, 32x32) across different Windows display scaling factors (100%, 125%, 150%, 200%).
 * Taskbar Theme Adaptive: Automatically detects Windows Dark and Light taskbar settings.
 
-### Battery Statistics and Runtime Estimation
+### 3. Battery Statistics and Runtime Estimation
 * Discharge Rate Tracking: Records battery drop intervals to calculate a rolling average discharge rate (percent per hour).
 * Remaining Runtime Estimate: Calculates estimated battery life remaining (for example, "~19h 40m remaining").
 * Charging Duration Estimate: Calculates estimated time required to reach 85% and 100% full charge.
 * Persistent Statistics: Stores learned discharge and charge rates in the Windows Registry so estimates remain accurate across computer restarts.
 
-### Smart Battery Notifications
+### 4. Smart Battery Notifications
 * Low Battery Alert (<= 20%): Balloon warning reminding you to connect the charging cable.
 * Battery Longevity Alert (>= 85%): Notification when charging crosses 85%, allowing you to unplug and preserve lithium-ion battery health.
 * High Battery Alert (100%): Notification when charging reaches 100%, indicating the battery is fully charged and ready for wireless use.
 * Debounced Delivery: Alerts fire only once per cycle with built-in hysteresis to prevent repetitive notification spam.
 
-### Hardware Safety and Radio Conservation
+### 5. Hardware Safety and Radio Conservation
 * Read-Only Queries: Uses only the read-only QMK VIA Custom Value command (`[0x08, 0x00, 0x07]`). It performs zero EEPROM writes and zero flash sector modifications, ensuring no risk to keyboard firmware or saved keymaps.
 * Non-Exclusive Sharing: Device handles are opened with `FILE_SHARE_READ | FILE_SHARE_WRITE`, allowing full coexistence with the VIA Web Configurator, keyboard flashing utilities, and games.
 * Cached Device Paths: Eliminates repeated USB bus enumerations during routine polling cycles.
