@@ -10,7 +10,7 @@ An ultra-lightweight, dedicated Windows system tray battery monitor engineered f
 
 This application is currently developed as a personal project. It was created out of a desire for a genuinely minimal, highly optimized utility that tracks just what is needed—battery levels and charging state—without the heavy background runtimes, multi-megabyte memory footprints, or bloated multi-device software suites typical of commercial peripheral managers.
 
-Written in pure Win32 C, Core Monitor compiles to a single standalone executable of approximately 80 KB and runs in roughly 2 MB of RAM with 0.0% idle CPU usage.
+Written in pure Win32 C, Core Monitor compiles to a single standalone executable of approximately 47 KB and runs in roughly 1.8 MB of RAM with 0.0% idle CPU usage.
 
 ---
 
@@ -39,16 +39,18 @@ Written in pure Win32 C, Core Monitor compiles to a single standalone executable
 * Charging Duration Estimate: Calculates estimated time required to reach 85% and 100% full charge.
 * Persistent Statistics: Stores learned discharge and charge rates in the Windows Registry so estimates remain accurate across computer restarts.
 
-### Dual Smart Notifications
+### Smart Battery Notifications
 * Low Battery Alert (<= 20%): Balloon warning reminding you to connect the charging cable.
-* High Battery Longevity Alert (>= 85%): Notification when charging crosses 85%, allowing you to unplug and preserve lithium-ion battery health.
-* Debounced Delivery: Alerts fire only once per cycle to prevent repetitive notification spam.
+* Battery Longevity Alert (>= 85%): Notification when charging crosses 85%, allowing you to unplug and preserve lithium-ion battery health.
+* High Battery Alert (100%): Notification when charging reaches 100%, indicating the battery is fully charged and ready for wireless use.
+* Debounced Delivery: Alerts fire only once per cycle with built-in hysteresis to prevent repetitive notification spam.
 
 ### Hardware Safety and Radio Conservation
 * Read-Only Queries: Uses only the read-only QMK VIA Custom Value command (`[0x08, 0x00, 0x07]`). It performs zero EEPROM writes and zero flash sector modifications, ensuring no risk to keyboard firmware or saved keymaps.
 * Non-Exclusive Sharing: Device handles are opened with `FILE_SHARE_READ | FILE_SHARE_WRITE`, allowing full coexistence with the VIA Web Configurator, keyboard flashing utilities, and games.
 * Cached Device Paths: Eliminates repeated USB bus enumerations during routine polling cycles.
-* Sleep Mode Backoff: Non-intrusive 60-second polling cycle with automatic power-event awareness (WM_POWERBROADCAST), ensuring zero radio congestion, zero keystroke latency, and letting the keyboard remain undisturbed in deep sleep.
+* Sleep Mode & Suspension Backoff: Automatic power-event awareness (`WM_POWERBROADCAST` and `PBT_APMSUSPEND`), ensuring zero radio queries while the computer is sleeping.
+* Session Lock & Display-Off Awareness: Integrates with Windows Terminal Services (`WTSRegisterSessionNotification`) and display power notifications (`GUID_CONSOLE_DISPLAY_STATE`). Polling is completely suspended whenever the workstation is locked (`Win+L`) or displays enter standby, eliminating unnecessary radio wakeups when away from the computer.
 
 ### Windows Integration
 * Rich Tooltip: Multi-line hover tooltip showing device name, battery percentage, active connection mode, state, and runtime estimation.
@@ -58,7 +60,9 @@ Written in pure Win32 C, Core Monitor compiles to a single standalone executable
   * Battery Details & Statistics window (accessible via menu or double-clicking tray icon)
   * Icon style toggle (keyboard glyph vs. numeric percentage)
   * Low battery alert toggle
+  * Battery longevity alert toggle
   * High battery alert toggle
+  * System-Adaptive Theme: Context menu seamlessly renders in native Windows Dark Mode or Light Mode matching your system personalization preferences.
   * Start with Windows toggle
   * Clean application exit
 * Seamless Startup: Stores autostart preference cleanly in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Runs silently into the system tray without console windows or startup delays.
@@ -67,7 +71,7 @@ Written in pure Win32 C, Core Monitor compiles to a single standalone executable
 
 ## Specifications
 
-* Binary Size: ~80 KB (single standalone .exe, zero external dependencies)
+* Binary Size: ~47 KB (single standalone .exe, zero external dependencies)
 * Memory Usage: ~1.8 MB to 2.4 MB RAM (automatic working set trimming)
 * Idle CPU: 0.0%
 * Supported OS: Windows 10, Windows 11 (64-bit and 32-bit)
@@ -99,7 +103,7 @@ build.bat
 #### Manual Compilation
 ```cmd
 windres -i res\resource.rc -o res\resource.o -I res
-gcc -O2 -s -Wall -mwindows -static-libgcc -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi -lm
+gcc -Os -s -Wall -fno-asynchronous-unwind-tables -fno-ident -mwindows -static-libgcc -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi -lm
 ```
 
 ---

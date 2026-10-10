@@ -7,52 +7,40 @@
 #define PI 3.14159265358979323846f
 #endif
 
-// High-contrast 4x8 bitmap font for digits 0-9
-// 4 bits wide per row (bits 3..0), 8 rows tall
-static const unsigned char DIGIT_FONT_4X8[10][8] = {
-    { 0x6, 0x9, 0x9, 0x9, 0x9, 0x9, 0x9, 0x6 }, // 0: rounded oval
-    { 0x4, 0xC, 0x4, 0x4, 0x4, 0x4, 0x4, 0xE }, // 1: top serif, straight spine, bottom base
-    { 0x6, 0x9, 0x1, 0x2, 0x4, 0x8, 0x8, 0xF }, // 2: smooth top, diagonal stroke, base
-    { 0xE, 0x1, 0x1, 0x7, 0x1, 0x1, 0x1, 0xE }, // 3: connected middle bar
-    { 0x9, 0x9, 0x9, 0xF, 0x1, 0x1, 0x1, 0x1 }, // 4: open top, full bar, right leg
-    { 0xF, 0x8, 0x8, 0xE, 0x1, 0x1, 0x1, 0xE }, // 5: top bar, left stroke, middle loop, bottom loop
-    { 0x6, 0x8, 0x8, 0xE, 0x9, 0x9, 0x9, 0x6 }, // 6: smooth top, bottom loop
-    { 0xF, 0x1, 0x1, 0x2, 0x2, 0x4, 0x4, 0x4 }, // 7: top bar, diagonal leg
-    { 0x6, 0x9, 0x9, 0x6, 0x9, 0x9, 0x9, 0x6 }, // 8: symmetric double loop
-    { 0x6, 0x9, 0x9, 0x7, 0x1, 0x1, 0x1, 0x6 }  // 9: top loop, right leg, bottom curl
+// High-contrast 3x6 bitmap font for digits 0-9
+// 3 bits wide per row (bits 2..0), 6 rows tall
+static const unsigned char DIGIT_FONT_3X6[10][6] = {
+    { 0x7, 0x5, 0x5, 0x5, 0x5, 0x7 }, // 0
+    { 0x2, 0x6, 0x2, 0x2, 0x2, 0x7 }, // 1
+    { 0x7, 0x1, 0x7, 0x4, 0x4, 0x7 }, // 2
+    { 0x7, 0x1, 0x7, 0x1, 0x1, 0x7 }, // 3
+    { 0x5, 0x5, 0x7, 0x1, 0x1, 0x1 }, // 4
+    { 0x7, 0x4, 0x7, 0x1, 0x1, 0x7 }, // 5
+    { 0x7, 0x4, 0x7, 0x5, 0x5, 0x7 }, // 6
+    { 0x7, 0x1, 0x1, 0x2, 0x2, 0x2 }, // 7
+    { 0x7, 0x5, 0x7, 0x5, 0x5, 0x7 }, // 8
+    { 0x7, 0x5, 0x7, 0x1, 0x1, 0x7 }  // 9
 };
 
-// Compact 3x8 font for '0' in '100'
-static const unsigned char DIGIT_FONT_3X8_0[8] = {
-    0x2, 0x5, 0x5, 0x5, 0x5, 0x5, 0x5, 0x2
+// Contour-proportioned 75% Mechanical Keyboard glyph (8x6, rows 5..10, cols 4..11)
+// Clean iconic silhouette with distinct key clusters and spacebar
+static const char *KEYBOARD_ROWS[6] = {
+    "01111110", // Row 5:  rounded top chassis
+    "11011011", // Row 6:  distinct top key clusters
+    "10100101", // Row 7:  staggered alphanumeric keys
+    "10000001", // Row 8:  chassis separator
+    "10111101", // Row 9:  dedicated wide spacebar
+    "01111110"  // Row 10: rounded bottom chassis
 };
 
-// Compact 2x8 font for '1' in '100'
-static const unsigned char DIGIT_FONT_2X8_1[8] = {
-    0x2, 0x3, 0x1, 0x1, 0x1, 0x1, 0x1, 0x3
-};
-
-// 75% Mechanical Keyboard glyph (11x7, rows 4..10, cols 2..12)
-// Features contoured chassis, top function row, alphanumeric row, and dedicated spacebar
-static const char *KEYBOARD_ROWS[7] = {
-    "01111111110", // Row 4: contoured top chassis
-    "10101010101", // Row 5: function keys row
-    "10000000001", // Row 6: chassis separator
-    "10101010101", // Row 7: main alphanumeric keys
-    "10000000001", // Row 8: chassis separator
-    "10011111001", // Row 9: dedicated spacebar
-    "01111111110"  // Row 10: contoured bottom chassis
-};
-
-// Energetic charging lightning bolt (5x7, rows 4..10, cols 5..9)
-static const char *LIGHTNING_ROWS[7] = {
-    "00110",
-    "01100",
-    "11110",
-    "00111",
-    "00110",
-    "01100",
-    "01000"
+// Energetic charging lightning bolt overlay (5x6, rows 5..10, cols 6..10)
+static const char *LIGHTNING_ROWS[6] = {
+    "00110", // Row 5
+    "01100", // Row 6
+    "11110", // Row 7
+    "00111", // Row 8
+    "00110", // Row 9
+    "01000"  // Row 10
 };
 
 BOOL IconGen_IsTaskbarLight(void) {
@@ -182,7 +170,7 @@ HICON IconGen_CreateBatteryIcon(
     unsigned char trackR = lightTaskbar ? 0 : 255;
     unsigned char trackG = lightTaskbar ? 0 : 255;
     unsigned char trackB = lightTaskbar ? 0 : 255;
-    float trackAlpha = isDisconnected ? 0.15f : (isSleeping ? 0.20f : 0.25f);
+    float trackAlpha = isDisconnected ? 0.20f : (isSleeping ? 0.26f : 0.38f);
 
     // Determine Active Arc Colors matching user reference image
     unsigned char arcR = 34, arcG = 197, arcB = 94; // Vibrant emerald green default
@@ -218,10 +206,10 @@ HICON IconGen_CreateBatteryIcon(
     float pxStep = 1.0f / halfSize;
 
     // Ring proportions:
-    // Radius = 0.88, Thickness = 0.17
-    // Spans the full icon bounding box (16px) with maximal interior diameter (~12.8px)
-    const float ringRadius = 0.88f;
-    const float ringThickness = 0.17f;
+    // Radius = 0.84, Thickness = 0.26
+    // Prominent, bold ~2.1px arc with substantial negative space for the center glyph
+    const float ringRadius = 0.84f;
+    const float ringThickness = 0.26f;
     const float halfThickness = ringThickness * 0.5f;
 
     int effPercent = (batteryPercent < 0) ? 0 : (batteryPercent > 100 ? 100 : batteryPercent);
@@ -295,68 +283,67 @@ HICON IconGen_CreateBatteryIcon(
     float centerAlpha = isDisconnected ? 0.35f : (isSleeping ? 0.45f : 1.0f);
 
     if (centerStyle == ICON_CENTER_PERCENT && effPercent >= 0 && !isDisconnected && !isSleeping) {
-        // Large, bold, high-contrast numeric percentage
+        // High-contrast, well-proportioned numeric percentage (rows 5..10)
         if (effPercent < 10) {
-            // Single digit: centered at col 6..9, row 4..11
-            for (int row = 0; row < 8; row++) {
-                unsigned char bits = DIGIT_FONT_4X8[effPercent][row];
-                for (int col = 0; col < 4; col++) {
-                    if (bits & (1 << (3 - col))) {
-                        DrawGridCell(pixels, size, 6 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+            // Single digit: centered at col 6..8, row 5..10
+            for (int row = 0; row < 6; row++) {
+                unsigned char bits = DIGIT_FONT_3X6[effPercent][row];
+                for (int col = 0; col < 3; col++) {
+                    if (bits & (1 << (2 - col))) {
+                        DrawGridCell(pixels, size, 6 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
                     }
                 }
             }
         } else if (effPercent < 100) {
-            // Two digits: d1 at cols 3..6, d2 at cols 8..11, row 4..11
+            // Two digits: d1 at cols 4..6, d2 at cols 8..10, row 5..10
             int d1 = effPercent / 10;
             int d2 = effPercent % 10;
-            for (int row = 0; row < 8; row++) {
-                unsigned char bits1 = DIGIT_FONT_4X8[d1][row];
-                unsigned char bits2 = DIGIT_FONT_4X8[d2][row];
-                for (int col = 0; col < 4; col++) {
-                    if (bits1 & (1 << (3 - col))) {
-                        DrawGridCell(pixels, size, 3 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+            for (int row = 0; row < 6; row++) {
+                unsigned char bits1 = DIGIT_FONT_3X6[d1][row];
+                unsigned char bits2 = DIGIT_FONT_3X6[d2][row];
+                for (int col = 0; col < 3; col++) {
+                    if (bits1 & (1 << (2 - col))) {
+                        DrawGridCell(pixels, size, 4 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
                     }
-                    if (bits2 & (1 << (3 - col))) {
-                        DrawGridCell(pixels, size, 8 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+                    if (bits2 & (1 << (2 - col))) {
+                        DrawGridCell(pixels, size, 8 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
                     }
                 }
             }
         } else {
-            // 100%: '1' at cols 3..4, '0' at cols 6..8, '0' at cols 10..12
-            for (int row = 0; row < 8; row++) {
-                unsigned char b1 = DIGIT_FONT_2X8_1[row];
-                if (b1 & 2) DrawGridCell(pixels, size, 3, 4 + row, fgR, fgG, fgB, centerAlpha);
-                if (b1 & 1) DrawGridCell(pixels, size, 4, 4 + row, fgR, fgG, fgB, centerAlpha);
+            // 100%: '1' spine at col 4, '0' at cols 6..8, '0' at cols 10..12, row 5..10
+            for (int row = 0; row < 6; row++) {
+                DrawGridCell(pixels, size, 4, 5 + row, fgR, fgG, fgB, centerAlpha);
+                if (row == 0) DrawGridCell(pixels, size, 3, 5 + row, fgR, fgG, fgB, centerAlpha);
 
-                unsigned char b0 = DIGIT_FONT_3X8_0[row];
+                unsigned char b0 = DIGIT_FONT_3X6[0][row];
                 for (int col = 0; col < 3; col++) {
                     if (b0 & (1 << (2 - col))) {
-                        DrawGridCell(pixels, size, 6 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
-                        DrawGridCell(pixels, size, 10 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+                        DrawGridCell(pixels, size, 6 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
+                        DrawGridCell(pixels, size, 10 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
                     }
                 }
             }
         }
     } else {
-        // Detailed 75% Mechanical Keyboard Glyph (11x7, rows 4..10, cols 2..12)
-        for (int r = 0; r < 7; r++) {
+        // Contour-proportioned 75% Mechanical Keyboard Glyph (8x6, rows 5..10, cols 4..11)
+        for (int r = 0; r < 6; r++) {
             const char *line = KEYBOARD_ROWS[r];
-            for (int c = 0; c < 11; c++) {
+            for (int c = 0; c < 8; c++) {
                 if (line[c] == '1') {
-                    DrawGridCell(pixels, size, 2 + c, 4 + r, fgR, fgG, fgB, centerAlpha);
+                    DrawGridCell(pixels, size, 4 + c, 5 + r, fgR, fgG, fgB, centerAlpha);
                 }
             }
         }
 
         // Active charging overlay: vivid electric gold lightning bolt
         if (isCharging) {
-            float boltAlpha = (0.75f + 0.25f * breathMultiplier);
-            for (int r = 0; r < 7; r++) {
+            float boltAlpha = (0.80f + 0.20f * breathMultiplier);
+            for (int r = 0; r < 6; r++) {
                 const char *bline = LIGHTNING_ROWS[r];
                 for (int c = 0; c < 5; c++) {
                     if (bline[c] == '1') {
-                        DrawGridCell(pixels, size, 5 + c, 4 + r, 251, 191, 36, boltAlpha);
+                        DrawGridCell(pixels, size, 6 + c, 5 + r, 251, 191, 36, boltAlpha);
                     }
                 }
             }

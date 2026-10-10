@@ -11,10 +11,12 @@ extern "C" {
 typedef struct {
     CenterIconStyle centerStyle;
     BOOL startWithWindows;
-    BOOL lowBatteryAlert;           // Notify when battery <= 20%
-    BOOL highBatteryAlert;          // Notify when battery >= 85% (protects battery health)
-    BOOL lowAlertShownForDischarge; // Prevents repeating low battery notifications
-    BOOL highAlertShownForCharge;   // Prevents repeating high battery notifications
+    BOOL lowBatteryAlert;              // Notify when battery <= 20%
+    BOOL longevityAlert;               // Notify when battery >= 85% (protects battery health)
+    BOOL highBatteryAlert;             // Notify when battery reaches 100%
+    BOOL lowAlertShownForDischarge;    // Prevents repeating low battery notifications
+    BOOL longevityAlertShownForCharge; // Prevents repeating longevity battery notifications
+    BOOL highAlertShownForCharge;      // Prevents repeating high battery notifications
 } AppSettings;
 
 extern AppSettings g_Settings;

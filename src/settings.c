@@ -8,8 +8,10 @@ AppSettings g_Settings = {
     .centerStyle = ICON_CENTER_KEYBOARD,
     .startWithWindows = TRUE,
     .lowBatteryAlert = TRUE,
+    .longevityAlert = TRUE,
     .highBatteryAlert = TRUE,
     .lowAlertShownForDischarge = FALSE,
+    .longevityAlertShownForCharge = FALSE,
     .highAlertShownForCharge = FALSE
 };
 
@@ -27,6 +29,10 @@ void Settings_Load(void) {
         size = sizeof(val);
         if (RegQueryValueExW(hKey, L"LowBatteryAlert", NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
             g_Settings.lowBatteryAlert = (val != 0);
+        }
+        size = sizeof(val);
+        if (RegQueryValueExW(hKey, L"LongevityAlert", NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
+            g_Settings.longevityAlert = (val != 0);
         }
         size = sizeof(val);
         if (RegQueryValueExW(hKey, L"HighBatteryAlert", NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
@@ -62,6 +68,8 @@ void Settings_Save(void) {
         RegSetValueExW(hKey, L"CenterStyle", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         val = g_Settings.lowBatteryAlert ? 1 : 0;
         RegSetValueExW(hKey, L"LowBatteryAlert", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
+        val = g_Settings.longevityAlert ? 1 : 0;
+        RegSetValueExW(hKey, L"LongevityAlert", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         val = g_Settings.highBatteryAlert ? 1 : 0;
         RegSetValueExW(hKey, L"HighBatteryAlert", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         RegDeleteValueW(hKey, L"ChargingOverride");

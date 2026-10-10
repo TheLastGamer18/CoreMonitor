@@ -25,11 +25,12 @@
 #define IDM_STATUS_EST    2003
 #define IDM_REFRESH       2004
 #define IDM_DETAILS       2005
-#define IDM_TOGGLE_STYLE  2007
-#define IDM_LOW_ALERT     2008
-#define IDM_HIGH_ALERT    2009
-#define IDM_AUTOSTART     2010
-#define IDM_EXIT          2011
+#define IDM_TOGGLE_STYLE     2007
+#define IDM_LOW_ALERT        2008
+#define IDM_LONGEVITY_ALERT  2009
+#define IDM_HIGH_ALERT       2010
+#define IDM_AUTOSTART        2011
+#define IDM_EXIT             2012
 
 static const WCHAR *CLASS_NAME = L"CoreMonitor_Class";
 static const WCHAR *MUTEX_NAME = L"Global\\CoreMonitor_Mutex";
@@ -43,6 +44,100 @@ static UINT s_uTaskbarRestartMsg = 0;
 static float s_breathPhase = 0.0f;
 static BOOL s_isAnimating = FALSE;
 static HDEVNOTIFY s_hDevNotify = NULL;
+
+typedef enum {
+    APPMODE_DEFAULT = 0,
+    APPMODE_ALLOWDARK = 1,
+    APPMODE_FORCEDARK = 2,
+    APPMODE_FORCELIGHT = 3,
+    APPMODE_MAX = 4
+} PreferredAppMode;
+
+typedef PreferredAppMode (WINAPI *pfnSetPreferredAppMode_t)(PreferredAppMode);
+typedef BOOL (WINAPI *pfnAllowDarkModeForWindow_t)(HWND, BOOL);
+typedef BOOL (WINAPI *pfnAllowDarkModeForApp_t)(BOOL);
+typedef void (WINAPI *pfnFlushMenuThemes_t)(void);
+
+static pfnSetPreferredAppMode_t s_pfnSetPreferredAppMode = NULL;
+static pfnAllowDarkModeForWindow_t s_pfnAllowDarkModeForWindow = NULL;
+static pfnFlushMenuThemes_t s_pfnFlushMenuThemes = NULL;
+
+static void InitDarkMode(void) {
+    HMODULE hUxTheme = LoadLibraryW(L"uxtheme.dll");
+    if (!hUxTheme) return;
+
+    s_pfnSetPreferredAppMode = (pfnSetPreferredAppMode_t)GetProcAddress(hUxTheme, MAKEINTRESOURCEA(135));
+    s_pfnFlushMenuThemes = (pfnFlushMenuThemes_t)GetProcAddress(hUxTheme, MAKEINTRESOURCEA(136));
+    s_pfnAllowDarkModeForWindow = (pfnAllowDarkModeForWindow_t)GetProcAddress(hUxTheme, MAKEINTRESOURCEA(133));
+
+    if (s_pfnSetPreferredAppMode) {
+        s_pfnSetPreferredAppMode(APPMODE_ALLOWDARK);
+    } else {
+        pfnAllowDarkModeForApp_t pfnAllowDarkModeForApp = (pfnAllowDarkModeForApp_t)GetProcAddress(hUxTheme, MAKEINTRESOURCEA(135));
+        if (pfnAllowDarkModeForApp) {
+            pfnAllowDarkModeForApp(TRUE);
+        }
+    }
+
+    if (s_pfnFlushMenuThemes) {
+        s_pfnFlushMenuThemes();
+    }
+}
+
+#ifndef WM_WTSSESSION_CHANGE
+#define WM_WTSSESSION_CHANGE 0x02B1
+#endif
+#ifndef WTS_SESSION_LOCK
+#define WTS_SESSION_LOCK 0x7
+#endif
+#ifndef WTS_SESSION_UNLOCK
+#define WTS_SESSION_UNLOCK 0x8
+#endif
+#ifndef NOTIFY_FOR_THIS_SESSION
+#define NOTIFY_FOR_THIS_SESSION 0
+#endif
+
+#ifndef PBT_POWERSETTINGCHANGE
+#define PBT_POWERSETTINGCHANGE 0x8013
+#endif
+
+typedef HANDLE HPOWERNOTIFY;
+typedef struct {
+    GUID PowerSetting;
+    DWORD DataLength;
+    UCHAR Data[1];
+} POWERBROADCAST_SETTING_M;
+
+static const GUID GUID_CONSOLE_DISPLAY_STATE_M = 
+    { 0x6fe69556, 0x704a, 0x47a0, { 0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47 } };
+
+typedef BOOL (WINAPI *pfnWTSRegisterSessionNotification_t)(HWND, DWORD);
+typedef BOOL (WINAPI *pfnWTSUnRegisterSessionNotification_t)(HWND);
+typedef HPOWERNOTIFY (WINAPI *pfnRegisterPowerSettingNotification_t)(HANDLE, LPCGUID, DWORD);
+typedef BOOL (WINAPI *pfnUnregisterPowerSettingNotification_t)(HPOWERNOTIFY);
+
+static pfnWTSRegisterSessionNotification_t s_pfnWTSRegisterSessionNotification = NULL;
+static pfnWTSUnRegisterSessionNotification_t s_pfnWTSUnRegisterSessionNotification = NULL;
+static pfnRegisterPowerSettingNotification_t s_pfnRegisterPowerSettingNotification = NULL;
+static pfnUnregisterPowerSettingNotification_t s_pfnUnregisterPowerSettingNotification = NULL;
+static HPOWERNOTIFY s_hPowerNotify = NULL;
+static BOOL s_isWtsRegistered = FALSE;
+static BOOL s_isDisplayOff = FALSE;
+static BOOL s_isSessionLocked = FALSE;
+
+static void InitPowerAndSessionHooks(void) {
+    HMODULE hUser = GetModuleHandleW(L"user32.dll");
+    if (hUser) {
+        s_pfnRegisterPowerSettingNotification = (pfnRegisterPowerSettingNotification_t)GetProcAddress(hUser, "RegisterPowerSettingNotification");
+        s_pfnUnregisterPowerSettingNotification = (pfnUnregisterPowerSettingNotification_t)GetProcAddress(hUser, "UnregisterPowerSettingNotification");
+    }
+
+    HMODULE hWts = LoadLibraryW(L"wtsapi32.dll");
+    if (hWts) {
+        s_pfnWTSRegisterSessionNotification = (pfnWTSRegisterSessionNotification_t)GetProcAddress(hWts, "WTSRegisterSessionNotification");
+        s_pfnWTSUnRegisterSessionNotification = (pfnWTSUnRegisterSessionNotification_t)GetProcAddress(hWts, "WTSUnRegisterSessionNotification");
+    }
+}
 
 static void FormatRichTooltip(WCHAR *outTip, DWORD maxLen) {
     WCHAR estBuf[64];
@@ -155,9 +250,10 @@ static void ShowDetailsDialog(HWND hWnd) {
         L"  * Query Safety:       Read-only memory query (Zero EEPROM wear)\n"
         L"  * Radio Conservation: Automatic sleep backoff (60s cycle)\n"
         L"--------------------------------------------------\n"
-        L"Low Alert (<=20%%):    %s\n"
-        L"High Alert (>85%%):    %s\n"
-        L"Start with Windows:    %s",
+        L"Low Alert (<=20%%):     %s\n"
+        L"Longevity Alert (85%%): %s\n"
+        L"High Alert (100%%):     %s\n"
+        L"Start with Windows:     %s",
         battLevelStr,
         stateStr,
         connName,
@@ -166,6 +262,7 @@ static void ShowDetailsDialog(HWND hWnd) {
         dRate,
         cRate,
         g_Settings.lowBatteryAlert ? L"Enabled" : L"Disabled",
+        g_Settings.longevityAlert ? L"Enabled" : L"Disabled",
         g_Settings.highBatteryAlert ? L"Enabled" : L"Disabled",
         g_Settings.startWithWindows ? L"Enabled" : L"Disabled"
     );
@@ -201,21 +298,40 @@ static void PollAndUpdate(void) {
         g_Settings.lowAlertShownForDischarge = FALSE;
     }
 
-    // 2. High battery alert (threshold: >= 85% while charging to preserve lithium lifespan)
-    if (g_Settings.highBatteryAlert &&
+    // 2. Battery longevity alert (threshold: >= 85% while charging to preserve lithium lifespan)
+    if (g_Settings.longevityAlert &&
         s_currentStatus.batteryPercent >= 85 &&
+        (s_currentStatus.batteryPercent < 100 || !g_Settings.highBatteryAlert) &&
+        s_currentStatus.isCharging &&
+        !isDisconnected) {
+
+        if (!g_Settings.longevityAlertShownForCharge) {
+            s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
+            wcsncpy(s_nid.szInfoTitle, L"URX Core75 - Battery Longevity Alert", 63);
+            wsprintfW(s_nid.szInfo, L"Battery reached %d%%. Disconnect charger to protect lithium longevity.", s_currentStatus.batteryPercent);
+            s_nid.dwInfoFlags = NIIF_INFO;
+            Shell_NotifyIconW(NIM_MODIFY, &s_nid);
+            g_Settings.longevityAlertShownForCharge = TRUE;
+        }
+    } else if (s_currentStatus.batteryPercent < 80 || !s_currentStatus.isCharging) {
+        g_Settings.longevityAlertShownForCharge = FALSE;
+    }
+
+    // 3. High battery alert (threshold: 100% while charging)
+    if (g_Settings.highBatteryAlert &&
+        s_currentStatus.batteryPercent >= 100 &&
         s_currentStatus.isCharging &&
         !isDisconnected) {
 
         if (!g_Settings.highAlertShownForCharge) {
             s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
-            wcsncpy(s_nid.szInfoTitle, L"URX Core75 - Battery Charged", 63);
-            wsprintfW(s_nid.szInfo, L"Battery reached %d%%. Disconnect charger to protect lithium longevity.", s_currentStatus.batteryPercent);
+            wcsncpy(s_nid.szInfoTitle, L"URX Core75 - High Battery Alert", 63);
+            wsprintfW(s_nid.szInfo, L"Battery reached %d%%. Fully charged and ready for wireless use.", s_currentStatus.batteryPercent);
             s_nid.dwInfoFlags = NIIF_INFO;
             Shell_NotifyIconW(NIM_MODIFY, &s_nid);
             g_Settings.highAlertShownForCharge = TRUE;
         }
-    } else if (s_currentStatus.batteryPercent < 80 || !s_currentStatus.isCharging) {
+    } else if (s_currentStatus.batteryPercent < 95 || !s_currentStatus.isCharging) {
         g_Settings.highAlertShownForCharge = FALSE;
     }
 
@@ -244,6 +360,13 @@ static void PollAndUpdate(void) {
 }
 
 static void ShowContextMenu(HWND hWnd) {
+    if (s_pfnAllowDarkModeForWindow) {
+        s_pfnAllowDarkModeForWindow(hWnd, TRUE);
+    }
+    if (s_pfnFlushMenuThemes) {
+        s_pfnFlushMenuThemes();
+    }
+
     POINT pt;
     GetCursorPos(&pt);
 
@@ -305,12 +428,19 @@ static void ShowContextMenu(HWND hWnd) {
     }
     AppendMenuW(hMenu, lowFlags, IDM_LOW_ALERT, L"Low Battery Alert (<=20%)");
 
+    // Battery longevity alert toggle
+    UINT longevityFlags = MF_STRING;
+    if (g_Settings.longevityAlert) {
+        longevityFlags |= MF_CHECKED;
+    }
+    AppendMenuW(hMenu, longevityFlags, IDM_LONGEVITY_ALERT, L"Battery Longevity Alert (85%)");
+
     // High battery alert toggle
     UINT highFlags = MF_STRING;
     if (g_Settings.highBatteryAlert) {
         highFlags |= MF_CHECKED;
     }
-    AppendMenuW(hMenu, highFlags, IDM_HIGH_ALERT, L"High Battery Alert (>85%)");
+    AppendMenuW(hMenu, highFlags, IDM_HIGH_ALERT, L"High Battery Alert (100%)");
 
     // Run on startup toggle
     UINT autoFlags = MF_STRING;
@@ -346,6 +476,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
             s_hDevNotify = RegisterDeviceNotificationW(hWnd, &filter, DEVICE_NOTIFY_ALL_INTERFACE_CLASSES);
 
+            // Register for Session Lock / Unlock notifications
+            if (s_pfnWTSRegisterSessionNotification) {
+                s_isWtsRegistered = s_pfnWTSRegisterSessionNotification(hWnd, NOTIFY_FOR_THIS_SESSION);
+            }
+
+            // Register for Screen / Display Off / On state notifications
+            if (s_pfnRegisterPowerSettingNotification) {
+                s_hPowerNotify = s_pfnRegisterPowerSettingNotification(hWnd, &GUID_CONSOLE_DISPLAY_STATE_M, DEVICE_NOTIFY_WINDOW_HANDLE);
+            }
+
             // Regular polling interval: every 60 seconds
             SetTimer(hWnd, IDT_POLL_TIMER, 60000, NULL);
             break;
@@ -377,6 +517,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         case WM_SETTINGCHANGE: {
             // Windows theme changed (light/dark mode switch) or DPI change
+            if (s_pfnFlushMenuThemes) {
+                s_pfnFlushMenuThemes();
+            }
             UpdateTrayIcon();
             break;
         }
@@ -390,7 +533,45 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 // PC resumed from sleep:
                 // Give USB controllers and 2.4G dongles 2.5s to cleanly re-establish RF link
                 BatteryMonitor_InvalidateCache();
-                SetTimer(hWnd, IDT_POLL_TIMER, 2500, NULL);
+                if (!s_isSessionLocked && !s_isDisplayOff) {
+                    SetTimer(hWnd, IDT_POLL_TIMER, 2500, NULL);
+                }
+            } else if (wParam == PBT_POWERSETTINGCHANGE && lParam) {
+                POWERBROADCAST_SETTING_M *pSetting = (POWERBROADCAST_SETTING_M*)lParam;
+                if (IsEqualGUID(&pSetting->PowerSetting, &GUID_CONSOLE_DISPLAY_STATE_M)) {
+                    DWORD displayState = 0;
+                    memcpy(&displayState, pSetting->Data, (pSetting->DataLength < sizeof(DWORD)) ? pSetting->DataLength : sizeof(DWORD));
+                    if (displayState == 0) {
+                        // Display turned off: pause polling & radio queries
+                        s_isDisplayOff = TRUE;
+                        KillTimer(hWnd, IDT_POLL_TIMER);
+                        BatteryMonitor_InvalidateCache();
+                    } else if (displayState == 1 || displayState == 2) {
+                        // Display powered back on or un-dimmed: resume polling
+                        s_isDisplayOff = FALSE;
+                        if (!s_isSessionLocked) {
+                            BatteryMonitor_InvalidateCache();
+                            SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+
+        case WM_WTSSESSION_CHANGE: {
+            if (wParam == WTS_SESSION_LOCK) {
+                // Workstation locked: pause polling & radio queries
+                s_isSessionLocked = TRUE;
+                KillTimer(hWnd, IDT_POLL_TIMER);
+                BatteryMonitor_InvalidateCache();
+            } else if (wParam == WTS_SESSION_UNLOCK) {
+                // Workstation unlocked: resume polling if display is also active
+                s_isSessionLocked = FALSE;
+                if (!s_isDisplayOff) {
+                    BatteryMonitor_InvalidateCache();
+                    SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
+                }
             }
             break;
         }
@@ -432,6 +613,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                     g_Settings.lowBatteryAlert = !g_Settings.lowBatteryAlert;
                     Settings_Save();
                     break;
+                case IDM_LONGEVITY_ALERT:
+                    g_Settings.longevityAlert = !g_Settings.longevityAlert;
+                    Settings_Save();
+                    break;
                 case IDM_HIGH_ALERT:
                     g_Settings.highBatteryAlert = !g_Settings.highBatteryAlert;
                     Settings_Save();
@@ -450,6 +635,14 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (s_hDevNotify) {
                 UnregisterDeviceNotification(s_hDevNotify);
                 s_hDevNotify = NULL;
+            }
+            if (s_hPowerNotify && s_pfnUnregisterPowerSettingNotification) {
+                s_pfnUnregisterPowerSettingNotification(s_hPowerNotify);
+                s_hPowerNotify = NULL;
+            }
+            if (s_isWtsRegistered && s_pfnWTSUnRegisterSessionNotification) {
+                s_pfnWTSUnRegisterSessionNotification(hWnd);
+                s_isWtsRegistered = FALSE;
             }
             KillTimer(hWnd, IDT_POLL_TIMER);
             KillTimer(hWnd, IDT_ANIM_TIMER);
@@ -483,6 +676,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (hDesk) {
         SetThreadDesktop(hDesk);
     }
+
+    // Initialize System-Adaptive Dark Mode for Win32 menus
+    InitDarkMode();
+
+    // Initialize Session Lock and Screen Off power hooks
+    InitPowerAndSessionHooks();
 
     // 2. Single Instance Guard
     HANDLE hMutex = CreateMutexW(NULL, TRUE, MUTEX_NAME);
@@ -523,6 +722,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (!s_hWnd) {
         CloseHandle(hMutex);
         return 1;
+    }
+
+    if (s_pfnAllowDarkModeForWindow && s_hWnd) {
+        s_pfnAllowDarkModeForWindow(s_hWnd, TRUE);
     }
 
     // 8. Setup Taskbar Notification Icon
