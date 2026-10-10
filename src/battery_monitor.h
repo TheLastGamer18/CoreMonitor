@@ -39,6 +39,15 @@ void BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery);
 // Get the detected sleep timer in minutes (default 3 if unqueried/offline)
 int BatteryMonitor_GetSleepTimerMinutes(void);
 
+// Reset transient failure counters (e.g., when keystrokes confirm keyboard is awake)
+void BatteryMonitor_ResetFailures(void);
+
+// Returns TRUE if an ADC transient/outlier is currently being stabilized
+BOOL BatteryMonitor_IsFilteringTransient(void);
+
+// Returns TRUE if 2.4GHz USB dongle is connected but over-the-air queries fail repeatedly (keyboard physically switched off or silent)
+BOOL BatteryMonitor_IsRadioUnreachable(void);
+
 // Cleanup any open handles or resources
 void BatteryMonitor_Cleanup(void);
 

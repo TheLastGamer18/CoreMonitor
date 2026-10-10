@@ -10,6 +10,9 @@ extern "C" {
 // Initialize statistics engine and load persisted historical data from registry
 void BatteryStats_Init(void);
 
+// Resets elapsed time calculation upon PC resume/wake so sleep duration doesn't dilute discharge rate
+void BatteryStats_ResetSessionBaseline(void);
+
 // Record a new battery polling observation
 void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isSleeping, BOOL isDisconnected);
 

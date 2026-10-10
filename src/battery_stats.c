@@ -1,7 +1,6 @@
 #include "battery_stats.h"
 #include <stdio.h>
 #include <time.h>
-#include <math.h>
 
 #define STATS_REG_KEY L"Software\\CoreMonitor\\Stats"
 
@@ -57,6 +56,11 @@ void BatteryStats_Save(void) {
         RegSetValueExW(hKey, L"ChargeMilliRate", 0, REG_DWORD, (const BYTE*)&dwChargeMilli, sizeof(DWORD));
         RegCloseKey(hKey);
     }
+}
+
+void BatteryStats_ResetSessionBaseline(void) {
+    s_lastTimestamp = time(NULL);
+    s_lastPercent = -1;
 }
 
 void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isSleeping, BOOL isDisconnected) {

@@ -282,7 +282,7 @@ HICON IconGen_CreateBatteryIcon(
     // 2. RENDER CENTER GLYPH
     float centerAlpha = isDisconnected ? 0.35f : (isSleeping ? 0.45f : 1.0f);
 
-    if (centerStyle == ICON_CENTER_PERCENT && effPercent >= 0 && !isDisconnected && !isSleeping) {
+    if (centerStyle == ICON_CENTER_PERCENT && effPercent >= 0 && !isDisconnected) {
         // High-contrast, well-proportioned numeric percentage (rows 5..10)
         if (effPercent < 10) {
             // Single digit: centered at col 6..8, row 5..10

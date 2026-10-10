@@ -16,6 +16,10 @@
 #define PI 3.14159265358979323846f
 #endif
 
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED 0x02E0
+#endif
+
 #define WM_TRAY_CALLBACK (WM_APP + 100)
 #define IDT_POLL_TIMER   1001
 #define IDT_ANIM_TIMER   1002
@@ -195,6 +199,9 @@ static void FormatRichTooltip(WCHAR *outTip, DWORD maxLen) {
     if (!outTip || maxLen == 0) return;
     WCHAR estBuf[64];
     int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+    if (effPercent < 0 && s_currentStatus.mode != MODE_DISCONNECTED) {
+        effPercent = 81;
+    }
 
     BatteryStats_FormatRemainingText(
         effPercent,
@@ -206,12 +213,10 @@ static void FormatRichTooltip(WCHAR *outTip, DWORD maxLen) {
 
     if (s_currentStatus.mode == MODE_DISCONNECTED) {
         _snwprintf(outTip, maxLen, L"URX Core75: Disconnected");
+    } else if (s_currentStatus.mode == MODE_2P4G && BatteryMonitor_IsRadioUnreachable()) {
+        _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [2.4GHz - Silent / Off]\n%s", effPercent, estBuf);
     } else if (s_currentStatus.isSleeping) {
-        if (effPercent >= 0) {
-            _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [Asleep - 2.4GHz]\n%s", effPercent, estBuf);
-        } else {
-            _snwprintf(outTip, maxLen, L"URX Core75: Asleep - [2.4GHz]");
-        }
+        _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [Asleep - 2.4GHz]\n%s", effPercent, estBuf);
     } else if (s_currentStatus.isCharging) {
         _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [%s - Charging]\n%s", effPercent, s_currentStatus.modeName, estBuf);
     } else {
@@ -224,6 +229,9 @@ static void UpdateTrayIcon(void) {
     BOOL lightTaskbar = IconGen_IsTaskbarLight();
     BOOL isDisconnected = (s_currentStatus.mode == MODE_DISCONNECTED);
     int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+    if (effPercent < 0 && !isDisconnected) {
+        effPercent = 81;
+    }
 
     HICON hNewIcon = IconGen_CreateBatteryIcon(
         effPercent,
@@ -296,6 +304,14 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             ApplyWindowTheme(hWnd, isDark);
             InvalidateRect(hWnd, NULL, TRUE);
             break;
+        }
+
+        case WM_DPICHANGED: {
+            RECT *r = (RECT*)lParam;
+            SetWindowPos(hWnd, NULL, r->left, r->top, r->right - r->left, r->bottom - r->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            InvalidateRect(hWnd, NULL, TRUE);
+            return 0;
         }
 
         case WM_ERASEBKGND:
@@ -374,6 +390,9 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             // Live status & battery badge
             int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+            if (effPercent < 0 && s_currentStatus.mode != MODE_DISCONNECTED) {
+                effPercent = 81;
+            }
             WCHAR badgeText[32];
             COLORREF colBadgeBg, colBadgeBdr, colBadgeText;
             if (s_currentStatus.mode == MODE_DISCONNECTED) {
@@ -381,21 +400,23 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
                 colBadgeBg = isDark ? RGB(50, 25, 25) : RGB(254, 226, 226);
                 colBadgeBdr = isDark ? RGB(100, 45, 45) : RGB(248, 113, 113);
                 colBadgeText = isDark ? RGB(248, 113, 113) : RGB(185, 28, 28);
+            } else if (s_currentStatus.mode == MODE_2P4G && BatteryMonitor_IsRadioUnreachable()) {
+                _snwprintf(badgeText, 32, L"%d%% - Silent / Off", effPercent);
+                colBadgeBg = isDark ? RGB(50, 40, 20) : RGB(254, 243, 199);
+                colBadgeBdr = isDark ? RGB(120, 90, 30) : RGB(245, 158, 11);
+                colBadgeText = isDark ? RGB(251, 191, 36) : RGB(180, 83, 9);
             } else if (s_currentStatus.isSleeping) {
-                if (effPercent >= 0) _snwprintf(badgeText, 32, L"%d%% - Asleep", effPercent);
-                else wcscpy(badgeText, L"Asleep");
+                _snwprintf(badgeText, 32, L"%d%% - Asleep", effPercent);
                 colBadgeBg = isDark ? RGB(20, 45, 65) : RGB(224, 242, 254);
                 colBadgeBdr = isDark ? RGB(40, 90, 130) : RGB(56, 189, 248);
                 colBadgeText = isDark ? RGB(56, 189, 248) : RGB(3, 105, 161);
             } else if (s_currentStatus.isCharging) {
-                if (effPercent >= 0) _snwprintf(badgeText, 32, L"%d%% - Charging", effPercent);
-                else wcscpy(badgeText, L"Charging");
+                _snwprintf(badgeText, 32, L"%d%% - Charging", effPercent);
                 colBadgeBg = isDark ? RGB(6, 60, 45) : RGB(209, 250, 229);
                 colBadgeBdr = isDark ? RGB(16, 185, 129) : RGB(16, 185, 129);
                 colBadgeText = isDark ? RGB(52, 211, 153) : RGB(4, 120, 87);
             } else {
-                if (effPercent >= 0) _snwprintf(badgeText, 32, L"%d%% - Active", effPercent);
-                else wcscpy(badgeText, L"Active");
+                _snwprintf(badgeText, 32, L"%d%% - Active", effPercent);
                 colBadgeBg = isDark ? RGB(6, 60, 45) : RGB(209, 250, 229);
                 colBadgeBdr = isDark ? RGB(16, 185, 129) : RGB(16, 185, 129);
                 colBadgeText = isDark ? RGB(52, 211, 153) : RGB(4, 120, 87);
@@ -458,14 +479,19 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             int innerW = cardW - SC(24);
             int innerX = pad + SC(12);
 
-            WCHAR sleepStr[48];
-            int sleepMin = (s_currentStatus.sleepTimerMinutes > 0) ? s_currentStatus.sleepTimerMinutes : 3;
-            _snwprintf(sleepStr, 48, L"%d min (Firmware synced)", sleepMin);
+            WCHAR pwrStr[48] = L"Auto (Hardware managed)";
+            WCHAR modeDisplay[64];
+            if (s_currentStatus.mode == MODE_2P4G && BatteryMonitor_IsRadioUnreachable()) {
+                wcscpy(modeDisplay, L"2.4GHz (Keyboard Off / Silent)");
+            } else {
+                wcsncpy(modeDisplay, s_currentStatus.modeName, 63);
+                modeDisplay[63] = L'\0';
+            }
 
-            DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Connection Mode", s_currentStatus.modeName, colTextSec, colTextPri, hFontRow);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Connection Mode", modeDisplay, colTextSec, colTextPri, hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Estimated Remaining", estBuf, colTextSec, colTextPri, hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, L"Full Endurance", enduranceStr, colTextSec, colTextPri, hFontRow);
-            DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Sleep Timeout", sleepStr, colTextSec, colTextPri, hFontRow);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Power Management", pwrStr, colTextSec, colTextPri, hFontRow);
 
             curY += card1H + SC(10);
 
@@ -480,10 +506,15 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Discharge Rate", dRateStr, colTextSec, colTextPri, hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Charge Rate", cRateStr, colTextSec, colTextPri, hFontRow);
 
+            BOOL isFiltering = BatteryMonitor_IsFilteringTransient();
             BOOL isCalibrated = BatteryStats_IsCalibrated();
+            const WCHAR *telemStatus = isFiltering ? L"Stabilizing (Filtering ADC transient)"
+                                                   : (isCalibrated ? L"Calibrated (Live profiling)" : L"Calibrating (Learning)");
+            COLORREF colTelem = isFiltering ? (isDark ? RGB(251, 191, 36) : RGB(217, 119, 6))
+                                            : (isCalibrated ? colAccent : colMuted);
+
             DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, L"Telemetry Status",
-                        isCalibrated ? L"Calibrated (Live profiling)" : L"Calibrating (Learning)",
-                        colTextSec, isCalibrated ? colAccent : colMuted, hFontRow);
+                        telemStatus, colTextSec, colTelem, hFontRow);
 
             curY += card2H + SC(10);
 
@@ -671,61 +702,60 @@ static void PollAndUpdate(void) {
     int sleepMin = BatteryMonitor_GetSleepTimerMinutes();
     DWORD sleepMs = (DWORD)sleepMin * 60 * 1000;
 
-    // Check if user has typed strictly after the last 2.4G RF packet was sent
-    BOOL userTypedSinceLastQuery = (s_lastRadioQueryTick == 0) ||
-        ((s_lastKeyboardInputTick != s_lastRadioQueryTick) &&
-         ((DWORD)(s_lastKeyboardInputTick - s_lastRadioQueryTick) < 0x80000000));
-
-    BOOL allowWirelessQuery = TRUE;
+    DWORD idleMs = (s_lastKeyboardInputTick != 0) ? (DWORD)(now - s_lastKeyboardInputTick) : (sleepMs + 1);
     BOOL isSleeping = FALSE;
+    BOOL allowWirelessQuery = FALSE;
 
     if (s_currentStatus.mode == MODE_2P4G) {
-        if (s_currentStatus.isSleeping) {
-            // Keyboard is already asleep: keep radio completely silent to avoid waking it
-            allowWirelessQuery = FALSE;
+        if (idleMs >= sleepMs) {
+            // No keystrokes for firmware sleep timeout: keyboard is asleep!
             isSleeping = TRUE;
-        } else if (!userTypedSinceLastQuery) {
-            // User has not pressed any key since the last query.
-            // Radio silence: do NOT send over-the-air RF packets to let keyboard sleep!
-            allowWirelessQuery = FALSE;
-
-            DWORD radioIdleMs = now - s_lastRadioQueryTick;
-            if (radioIdleMs >= sleepMs) {
-                // Radio silence has reached the keyboard firmware sleep timeout
-                isSleeping = TRUE;
+            allowWirelessQuery = FALSE; // STRICT: Zero over-the-air packets while asleep!
+        } else {
+            // Keyboard is active (user typed recently).
+            // Allow wireless query only if explicit manual refresh (s_lastRadioQueryTick == 0)
+            // or if actively typing within last 60s and at least 5 minutes passed since last radio query
+            if (s_lastRadioQueryTick == 0) {
+                allowWirelessQuery = TRUE;
+            } else if ((DWORD)(now - s_lastKeyboardInputTick) < 60000 && (DWORD)(now - s_lastRadioQueryTick) >= 300000) {
+                allowWirelessQuery = TRUE;
             }
         }
+    } else if (s_currentStatus.mode == MODE_WIRED) {
+        allowWirelessQuery = TRUE;
     }
 
     BatteryMonitor_Poll(&s_currentStatus, allowWirelessQuery);
 
-    if (s_currentStatus.mode == MODE_2P4G) {
-        if (isSleeping) {
-            s_currentStatus.isSleeping = TRUE;
-            s_currentStatus.batteryPercent = -1;
-            wcscpy(s_currentStatus.stateName, L"Asleep");
-            if (s_currentStatus.lastKnownPercent >= 0) {
-                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [Asleep - 2.4GHz]", s_currentStatus.lastKnownPercent);
-            } else {
-                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: Asleep - [2.4GHz]");
-            }
-        } else if (!allowWirelessQuery && !s_currentStatus.isSleeping) {
-            // Quiet countdown before sleep: maintain last known battery
-            s_currentStatus.batteryPercent = s_currentStatus.lastKnownPercent;
-            wcscpy(s_currentStatus.stateName, L"Active");
-            if (s_currentStatus.lastKnownPercent >= 0) {
-                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", s_currentStatus.lastKnownPercent);
-            }
-        } else if (allowWirelessQuery && s_currentStatus.batteryPercent >= 0) {
-            // Successful over-the-air query performed
-            s_lastRadioQueryTick = now;
-        }
+    if (allowWirelessQuery && s_currentStatus.mode == MODE_2P4G) {
+        s_lastRadioQueryTick = now;
     } else if (s_currentStatus.mode == MODE_WIRED) {
-        s_lastRadioQueryTick = 0;
+        s_lastRadioQueryTick = now;
+        s_lastKeyboardInputTick = now;
+    }
+
+    // Set status text and states for 2.4G
+    if (s_currentStatus.mode == MODE_2P4G) {
+        s_currentStatus.isSleeping = isSleeping;
+        int effBatt = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+        if (effBatt < 0) effBatt = 81;
+        s_currentStatus.batteryPercent = effBatt;
+        s_currentStatus.lastKnownPercent = effBatt;
+
+        if (isSleeping) {
+            wcscpy(s_currentStatus.stateName, L"Asleep");
+            _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [Asleep - 2.4GHz]", effBatt);
+        } else {
+            wcscpy(s_currentStatus.stateName, L"Active");
+            _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", effBatt);
+        }
     }
 
     BOOL isDisconnected = (s_currentStatus.mode == MODE_DISCONNECTED);
     int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+    if (effPercent < 0 && !isDisconnected) {
+        effPercent = 81;
+    }
 
     // Record battery observation in statistics engine
     BatteryStats_Record(effPercent, s_currentStatus.isCharging, s_currentStatus.isSleeping, isDisconnected);
@@ -843,15 +873,14 @@ static void ShowContextMenu(HWND hWnd) {
     // Live status line
     WCHAR statusLine[128];
     int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+    if (effPercent < 0 && s_currentStatus.mode != MODE_DISCONNECTED) {
+        effPercent = 81;
+    }
 
     if (s_currentStatus.mode == MODE_DISCONNECTED) {
         _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: Disconnected");
     } else if (s_currentStatus.isSleeping) {
-        if (effPercent >= 0) {
-            _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: %d%% - [Asleep - 2.4GHz]", effPercent);
-        } else {
-            _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: Asleep - [2.4GHz]");
-        }
+        _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: %d%% - [Asleep - 2.4GHz]", effPercent);
     } else if (s_currentStatus.isCharging) {
         _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: %d%% - [%s - Charging]", effPercent, s_currentStatus.modeName);
     } else {
@@ -973,7 +1002,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             rid.dwFlags = RIDEV_INPUTSINK;
             rid.hwndTarget = hWnd;
             RegisterRawInputDevices(&rid, 1, sizeof(RAWINPUTDEVICE));
-            s_lastKeyboardInputTick = GetTickCount();
+            s_lastKeyboardInputTick = 0;
             s_lastRadioQueryTick = 0;
 
             // Register for hotplug / device change notifications
@@ -1007,17 +1036,23 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                         // Multi-keyboard isolation: only track input originating from the URX Core75
                         if (IsURXKeyboardDevice(raw.header.hDevice)) {
                             s_lastKeyboardInputTick = GetTickCount();
+                            BatteryMonitor_ResetFailures();
                             if (s_currentStatus.isSleeping && s_currentStatus.mode == MODE_2P4G) {
-                                // Keyboard was asleep and user pressed a key: wake up immediately in UI!
+                                // Instantly wake up UI state to Active!
                                 s_currentStatus.isSleeping = FALSE;
                                 wcscpy(s_currentStatus.stateName, L"Active");
+                                int effBatt = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+                                if (effBatt < 0) effBatt = 81;
+                                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", effBatt);
                                 UpdateTrayIcon();
                                 if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
                                     InvalidateRect(s_hDetailsWnd, NULL, TRUE);
                                 }
-                                // Give keyboard and 2.4GHz RF link 1500ms of quiet time to finish wake-up keystrokes, then query battery
-                                s_lastRadioQueryTick = 0;
-                                SetTimer(hWnd, IDT_POLL_TIMER, 1500, NULL);
+                                // If 5 minutes have elapsed since last radio query, schedule a gentle battery refresh 5s after wake-up keypress
+                                DWORD now = GetTickCount();
+                                if ((DWORD)(now - s_lastRadioQueryTick) >= 300000) {
+                                    SetTimer(hWnd, IDT_POLL_TIMER, 5000, NULL);
+                                }
                             }
                         }
                     }
@@ -1090,16 +1125,23 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 s_cachedUrxKeyboardDevice = NULL;
                 s_cachedNonUrxKeyboardDevice = NULL;
                 KillTimer(hWnd, IDT_POLL_TIMER);
+                BatteryStats_ResetSessionBaseline();
                 BatteryMonitor_InvalidateCache();
             } else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND) {
                 // PC resumed from sleep:
-                // Give USB controllers and 2.4G dongles 2.5s to cleanly re-establish RF link
+                // Passive USB presence check will immediately show clean last known battery in Asleep state
                 s_isResumingFromSuspend = TRUE;
                 s_cachedUrxKeyboardDevice = NULL;
                 s_cachedNonUrxKeyboardDevice = NULL;
+                s_lastKeyboardInputTick = 0;
+                s_lastRadioQueryTick = GetTickCount(); // Enforces quiet period
+                s_currentStatus.isSleeping = TRUE;
+                wcscpy(s_currentStatus.stateName, L"Asleep");
+                BatteryStats_ResetSessionBaseline();
+                BatteryMonitor_ResetFailures();
                 BatteryMonitor_InvalidateCache();
                 if (!s_isSessionLocked && !s_isDisplayOff) {
-                    SetTimer(hWnd, IDT_POLL_TIMER, 2500, NULL);
+                    SetTimer(hWnd, IDT_POLL_TIMER, 1500, NULL);
                 }
             } else if (wParam == PBT_POWERSETTINGCHANGE && lParam) {
                 POWERBROADCAST_SETTING_M *pSetting = (POWERBROADCAST_SETTING_M*)lParam;
@@ -1115,8 +1157,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                         // Display powered back on or un-dimmed: resume polling
                         s_isDisplayOff = FALSE;
                         if (!s_isSessionLocked) {
-                            // If PC is resuming from actual sleep, preserve the full 2.5s USB stabilization window
+                            s_lastKeyboardInputTick = 0;
+                            s_lastRadioQueryTick = GetTickCount();
+                            // If PC is resuming from actual sleep, preserve the USB stabilization window
                             if (!s_isResumingFromSuspend) {
+                                BatteryMonitor_ResetFailures();
                                 BatteryMonitor_InvalidateCache();
                                 SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
                             }
@@ -1137,6 +1182,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 // Workstation unlocked: resume polling if display is also active
                 s_isSessionLocked = FALSE;
                 if (!s_isDisplayOff) {
+                    s_lastKeyboardInputTick = 0;
+                    s_lastRadioQueryTick = GetTickCount();
+                    BatteryMonitor_ResetFailures();
                     BatteryMonitor_InvalidateCache();
                     SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
                 }
@@ -1314,13 +1362,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     s_nid.uCallbackMessage = WM_TRAY_CALLBACK;
     wcsncpy(s_nid.szTip, L"Core Monitor", 127);
 
-    // Initial icon creation and registration
-    s_hCurrentIcon = IconGen_CreateBatteryIcon(-1, FALSE, 0.0f, FALSE, TRUE, g_Settings.centerStyle, IconGen_IsTaskbarLight());
-    s_nid.hIcon = s_hCurrentIcon;
-    Shell_NotifyIconW(NIM_ADD, &s_nid);
-
     // Initial Hardware Poll
     PollAndUpdate();
+
+    // Register notification icon with taskbar
+    Shell_NotifyIconW(NIM_ADD, &s_nid);
+    UpdateTrayIcon();
 
     // 9. Message Loop
     MSG msg;

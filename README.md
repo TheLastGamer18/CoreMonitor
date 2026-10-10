@@ -2,7 +2,7 @@
 
 An ultra-lightweight, dedicated Windows system tray battery monitor built specifically for the URX Core75 Keyboard.
 
-No heavy runtimes, no background bloat. Compiles to a single standalone executable under 60 KB that uses ~1 MB RAM and 0.0% CPU.
+No heavy runtimes, no background bloat. Compiles to a single standalone executable under 60 KB that uses ~300 KB RAM and 0.0% CPU.
 
 ---
 
@@ -23,8 +23,8 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 
 - **Connection Modes:** Tracks 2.4 GHz wireless (USB dongle), wired USB, and Bluetooth (BLE).
 - **Firmware-Synced Sleep Protection:**
-  - Queries sleep timeout directly from firmware via QMK VIA Raw HID.
-  - Upon waking up, immediately update the tray icon, querying fresh battery telemetry.
+  - Synchronizes with keyboard sleep countdown via passive keystroke timing with zero radio traffic.
+  - Upon waking up, instantly updates the tray icon.
 - **Tray Icon:**
   - Circular battery ring with an active pulse when charging.
   - Option to show either the keyboard icon or a live percentage number.
@@ -63,7 +63,7 @@ build.bat
 Or compile manually:
 ```cmd
 windres -i res\resource.rc -o res\resource.o -I res
-gcc -Os -s -Wall -fmerge-all-constants -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ident -mwindows -static-libgcc -Wl,--gc-sections -Wl,--file-alignment,512 -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi -lm
+gcc -Os -s -Wall -flto -fmerge-all-constants -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ident -mwindows -static-libgcc -Wl,--gc-sections -Wl,--file-alignment,512 -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi
 ```
 
 ---
