@@ -1,4 +1,4 @@
-# Core Monitor
+<img width="268" height="110" alt="image" src="https://github.com/user-attachments/assets/4e6fd7be-80e1-4ae7-a811-8d498cb28588" /># Core Monitor
 
 An ultra-lightweight, dedicated Windows system tray battery monitor built specifically for the URX Core75 Keyboard.
 
@@ -8,9 +8,9 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 
 ## Screenshots
 
-| In Taskbar (with Battery Number) | In Taskbar (with Keyboard Icon) |
-| :---: | :---: |
-| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443068854636585/image.png?ex=6acb74b6&is=6aca2336&hm=70aa990fef6f02312158ab48f6f6594584cc5351e9a540023f8147f6bf85923d&" height="180" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558446150942457927/image.png?ex=6acb7794&is=6aca2614&hm=d53d346b9a168fe4e025fa4eddfc474df3dc9f0302f9fb181703a2ee5c5e360e&" height="180" style="vertical-align: middle;"> |
+| In Taskbar (with Ring Only) | In Taskbar (with Battery Number) | In Taskbar (with Keyboard Icon) |
+| :---: | :---: | :---: |
+| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558822209286570095/image.png?ex=6accd5d0&is=6acb8450&hm=ac9982b68c292a2f5f869140b3a44ad13d8fe7bcbbd4604c045db305f50bf397&" height="180" style="vertical-align: middle;">| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443068854636585/image.png?ex=6acb74b6&is=6aca2336&hm=70aa990fef6f02312158ab48f6f6594584cc5351e9a540023f8147f6bf85923d&" height="180" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558446150942457927/image.png?ex=6acb7794&is=6aca2614&hm=d53d346b9a168fe4e025fa4eddfc474df3dc9f0302f9fb181703a2ee5c5e360e&" height="180" style="vertical-align: middle;"> |
 
 
 | Right-Click Menu | Battery Details & Statistics Menu |
