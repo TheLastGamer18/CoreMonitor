@@ -10,7 +10,7 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 
 | In Taskbar (with Ring Only) | In Taskbar (with Battery Number) | In Taskbar (with Keyboard Icon) |
 | :---: | :---: | :---: |
-| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558822209286570095/image.png?ex=6accd5d0&is=6acb8450&hm=ac9982b68c292a2f5f869140b3a44ad13d8fe7bcbbd4604c045db305f50bf397&" height="180" style="vertical-align: middle;">| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443068854636585/image.png?ex=6acb74b6&is=6aca2336&hm=70aa990fef6f02312158ab48f6f6594584cc5351e9a540023f8147f6bf85923d&" height="180" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558446150942457927/image.png?ex=6acb7794&is=6aca2614&hm=d53d346b9a168fe4e025fa4eddfc474df3dc9f0302f9fb181703a2ee5c5e360e&" height="180" style="vertical-align: middle;"> |
+| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558822209286570095/image.png?ex=6accd5d0&is=6acb8450&hm=ac9982b68c292a2f5f869140b3a44ad13d8fe7bcbbd4604c045db305f50bf397&" height="180" style="vertical-align: middle;">| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558823037850361926/image.png?ex=6accd695&is=6acb8515&hm=5fe64e5f18864dda6e2931641bc17d52d905efa0e6b4670240b30defeb3458bb&" height="180" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558823087712247878/image.png?ex=6accd6a1&is=6acb8521&hm=338ea460643c3ead4f2cb65acaeda8b1ce13236cf97a2aefecebf833672c3ac0&" height="180" style="vertical-align: middle;"> |
 
 
 | Right-Click Menu | Battery Details & Statistics Menu |
