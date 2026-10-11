@@ -24,6 +24,7 @@
 #define IDT_POLL_TIMER   1001
 #define IDT_ANIM_TIMER   1002
 #define IDT_CLICK_TIMER  1003
+#define TOAST_MANUAL_COOLDOWN_MS 4000
 
 #define IDM_STATUS_TITLE  2001
 #define IDM_STATUS_INFO   2002
@@ -75,6 +76,7 @@ static BOOL s_isAnimating = FALSE;
 static HDEVNOTIFY s_hDevNotify = NULL;
 static DWORD s_lastKeyboardInputTick = 0;
 static DWORD s_lastRadioQueryTick = 0;
+static DWORD s_lastManualToastTick = 0;
 static BOOL s_isResumingFromSuspend = FALSE;
 static HANDLE s_cachedUrxKeyboardDevice = NULL;
 static HANDLE s_cachedNonUrxKeyboardDevice = NULL;
@@ -256,7 +258,16 @@ static void FormatRichTooltip(WCHAR *outTip, DWORD maxLen) {
     outTip[maxLen - 1] = L'\0';
 }
 
+static void ClearTrayToast(void) {
+    s_nid.uFlags = NIF_INFO;
+    s_nid.szInfo[0] = L'\0';
+    s_nid.szInfoTitle[0] = L'\0';
+    s_nid.dwInfoFlags = 0;
+    Shell_NotifyIconW(NIM_MODIFY, &s_nid);
+}
+
 static void ShowTrayToast(const WCHAR *title, const WCHAR *msg, DWORD flags) {
+    s_lastManualToastTick = GetTickCount();
     s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
     wcsncpy(s_nid.szInfoTitle, title, 63);
     s_nid.szInfoTitle[63] = L'\0';
@@ -1139,8 +1150,13 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 s_lastKeyboardInputTick = GetTickCount();
                 s_lastRadioQueryTick = 0;
                 PollAndUpdate();
-                FormatRichTooltip(s_nid.szInfo, 255);
-                ShowTrayToast(L"URX Core75 Status", s_nid.szInfo, NIIF_INFO);
+
+                // Prevent notification spam from repeated clicks
+                DWORD now = GetTickCount();
+                if (now - s_lastManualToastTick >= TOAST_MANUAL_COOLDOWN_MS) {
+                    FormatRichTooltip(s_nid.szInfo, 255);
+                    ShowTrayToast(L"URX Core75 Status", s_nid.szInfo, NIIF_INFO);
+                }
             }
             break;
         }
@@ -1254,6 +1270,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 ShowContextMenu(hWnd);
             } else if (lParam == WM_LBUTTONDBLCLK) {
                 KillTimer(hWnd, IDT_CLICK_TIMER);
+                ClearTrayToast();
                 ShowDetailsDialog(hWnd);
             } else if (lParam == WM_LBUTTONUP) {
                 // Defer single-click to avoid collision with double-click
@@ -1277,6 +1294,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                     PollAndUpdate();
                     break;
                 case IDM_DETAILS:
+                    ClearTrayToast();
                     ShowDetailsDialog(hWnd);
                     break;
                 case IDM_STYLE_RING_ONLY:
@@ -1366,6 +1384,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 s_hDetailsWnd = NULL;
             }
 
+            ClearTrayToast();
             // Remove tray icon
             Shell_NotifyIconW(NIM_DELETE, &s_nid);
             if (s_hCurrentIcon) {
@@ -1404,7 +1423,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // Set Process AppUserModelID for modern Windows Action Center toasts
     if (s_pfnSetCurrentProcessExplicitAppUserModelID) {
-        s_pfnSetCurrentProcessExplicitAppUserModelID(L"CoreMonitor.URX75.BatteryMonitor");
+        s_pfnSetCurrentProcessExplicitAppUserModelID(L"CoreMonitor");
     }
 
     // 2. Single Instance Guard (Wake existing instance to front)
