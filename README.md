@@ -41,20 +41,12 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 
 ---
 
-## Usage
+## Download and Run (Recommended)
 
 1. Download `CoreMonitor.exe` from [Releases](../../releases).
 2. Run it. No installation or setup needed.
 3. **Left-click** the tray icon for an instant battery status balloon.
 4. **Right-click** to view device details, switch icon styles, change alert settings, or toggle Start with Windows.
-
----
-
-## Download and Build
-
-If you want to build the executable yourself:
-1. **Download the code:** Clone the repository or download the ZIP file and extract it.
-2. **Run `build.bat`:** Double-click or execute `build.bat` in the project root to automatically compile and generate `CoreMonitor.exe`.
 
 ---
 
