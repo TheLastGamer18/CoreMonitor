@@ -246,8 +246,6 @@ static void FormatRichTooltip(WCHAR *outTip, DWORD maxLen) {
 
     if (s_currentStatus.mode == MODE_DISCONNECTED) {
         _snwprintf(outTip, maxLen, L"URX Core75: Disconnected");
-    } else if (s_currentStatus.mode == MODE_2P4G && BatteryMonitor_IsRadioUnreachable()) {
-        _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [2.4GHz - Silent / Off]\n%s", effPercent, estBuf);
     } else if (s_currentStatus.isSleeping) {
         _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [Asleep - 2.4GHz]\n%s", effPercent, estBuf);
     } else if (s_currentStatus.isCharging) {
@@ -418,7 +416,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             HFONT hFontBadge = CreateFontW(-SC(12), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                 DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            HFONT hFontBtn = CreateFontW(-SC(11), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+            HFONT hFontBtn = CreateFontW(-SC(12), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                 DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
@@ -449,11 +447,6 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
                 colBadgeBg = isDark ? RGB(50, 25, 25) : RGB(254, 226, 226);
                 colBadgeBdr = isDark ? RGB(100, 45, 45) : RGB(248, 113, 113);
                 colBadgeText = isDark ? RGB(248, 113, 113) : RGB(185, 28, 28);
-            } else if (s_currentStatus.mode == MODE_2P4G && BatteryMonitor_IsRadioUnreachable()) {
-                _snwprintf(badgeText, 32, L"%d%% - Silent / Off", effPercent);
-                colBadgeBg = isDark ? RGB(50, 40, 20) : RGB(254, 243, 199);
-                colBadgeBdr = isDark ? RGB(120, 90, 30) : RGB(245, 158, 11);
-                colBadgeText = isDark ? RGB(251, 191, 36) : RGB(180, 83, 9);
             } else if (s_currentStatus.isSleeping) {
                 _snwprintf(badgeText, 32, L"%d%% - Asleep", effPercent);
                 colBadgeBg = isDark ? RGB(20, 45, 65) : RGB(224, 242, 254);
@@ -529,12 +522,8 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             int innerX = pad + SC(12);
 
             WCHAR modeDisplay[64];
-            if (s_currentStatus.mode == MODE_2P4G && BatteryMonitor_IsRadioUnreachable()) {
-                wcscpy(modeDisplay, L"2.4GHz (Keyboard Off / Silent)");
-            } else {
-                wcsncpy(modeDisplay, s_currentStatus.modeName, 63);
-                modeDisplay[63] = L'\0';
-            }
+            wcsncpy(modeDisplay, s_currentStatus.modeName, 63);
+            modeDisplay[63] = L'\0';
 
             DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Connection Mode", modeDisplay, colTextSec, colTextPri, hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Estimated Remaining", estBuf, colTextSec, colTextPri, hFontRow);
@@ -609,7 +598,9 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             DrawCardPanel(memDC, btnX, btnY, btnW, btnH, colBtnBg, colBtnBdr, SC(6));
             SelectObject(memDC, hFontBtn);
             SetTextColor(memDC, colBtnText);
-            DrawTextW(memDC, L"Close", -1, &s_closeButtonRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            RECT textRect = s_closeButtonRect;
+            OffsetRect(&textRect, 0, -SC(1));
+            DrawTextW(memDC, L"Close", -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
             #undef SC
 

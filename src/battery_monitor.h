@@ -45,9 +45,6 @@ void BatteryMonitor_ResetFailures(void);
 // Returns TRUE if an ADC transient/outlier is currently being stabilized
 BOOL BatteryMonitor_IsFilteringTransient(void);
 
-// Returns TRUE if 2.4GHz USB dongle is connected but over-the-air queries fail repeatedly (keyboard physically switched off or silent)
-BOOL BatteryMonitor_IsRadioUnreachable(void);
-
 // Cleanup any open handles or resources
 void BatteryMonitor_Cleanup(void);
 

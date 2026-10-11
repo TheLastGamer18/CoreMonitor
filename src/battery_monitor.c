@@ -220,10 +220,6 @@ void BatteryMonitor_ResetFailures(void) {
     s_consecutiveFailures = 0;
 }
 
-BOOL BatteryMonitor_IsRadioUnreachable(void) {
-    return (s_consecutiveFailures >= 2);
-}
-
 void BatteryMonitor_InvalidateCache(void) {
     s_cachedWiredPath[0] = '\0';
     s_cached2P4GPath[0] = '\0';
