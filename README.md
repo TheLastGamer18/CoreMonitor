@@ -15,7 +15,7 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 
 | Right-Click Menu | Battery Details & Statistics Menu |
 | :---: | :---: |
-| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443069366603848/image.png?ex=6acb74b6&is=6aca2336&hm=63317789c9a134ab0eece2afd94238058f72f063a0415ac1166ac02762e6c9a7&" height="450" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558820445816356864/image.png?ex=6accd42b&is=6acb82ab&hm=667a12f63de493c2f1a0af515a0ec5ab9aa082553f16cf596400b45f39edef1c&" height="450" style="vertical-align: middle;"> |
+| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558823423000707092/image.png?ex=6accd6f1&is=6acb8571&hm=636f096123acce5f4307537b3377aea28a2098f423cec8f779cac2e925d6400d&" height="450" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558820445816356864/image.png?ex=6accd42b&is=6acb82ab&hm=667a12f63de493c2f1a0af515a0ec5ab9aa082553f16cf596400b45f39edef1c&" height="450" style="vertical-align: middle;"> |
 
 ---
 
