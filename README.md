@@ -50,6 +50,14 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 
 ---
 
+## Download and Build
+
+If you want to build the executable yourself:
+1. **Download the code:** Clone the repository or download the ZIP file and extract it.
+2. **Run `build.bat`:** Double-click or execute `build.bat` in the project root to automatically compile and generate `CoreMonitor.exe`.
+
+---
+
 ## Build from Source
 
 Requires MinGW-w64 (`gcc` and `windres`).
@@ -62,7 +70,7 @@ build.bat
 Or compile manually:
 ```cmd
 windres -i res\resource.rc -o res\resource.o -I res
-gcc -Os -s -Wall -flto -fmerge-all-constants -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ident -fomit-frame-pointer -falign-functions=1 -falign-jumps=1 -falign-loops=1 -mwindows -static-libgcc -Wl,--gc-sections -Wl,--file-alignment,512 -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi
+gcc -Os -s -Wall -flto -fno-math-errno -fno-trapping-math -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ident -fomit-frame-pointer -falign-functions=1 -falign-jumps=1 -falign-loops=1 -mwindows -static-libgcc -Wl,--gc-sections -Wl,--file-alignment,512 -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi
 ```
 
 ---
