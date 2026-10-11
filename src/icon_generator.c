@@ -7,39 +7,41 @@
 #define PI 3.14159265358979323846f
 #endif
 
-// High-contrast 3x6 bitmap font for digits 0-9
-// 3 bits wide per row (bits 2..0), 6 rows tall
-static const unsigned char DIGIT_FONT_3X6[10][6] = {
-    { 0x7, 0x5, 0x5, 0x5, 0x5, 0x7 }, // 0
-    { 0x2, 0x6, 0x2, 0x2, 0x2, 0x7 }, // 1
-    { 0x7, 0x1, 0x7, 0x4, 0x4, 0x7 }, // 2
-    { 0x7, 0x1, 0x7, 0x1, 0x1, 0x7 }, // 3
-    { 0x5, 0x5, 0x7, 0x1, 0x1, 0x1 }, // 4
-    { 0x7, 0x4, 0x7, 0x1, 0x1, 0x7 }, // 5
-    { 0x7, 0x4, 0x7, 0x5, 0x5, 0x7 }, // 6
-    { 0x7, 0x1, 0x1, 0x2, 0x2, 0x2 }, // 7
-    { 0x7, 0x5, 0x7, 0x5, 0x5, 0x7 }, // 8
-    { 0x7, 0x5, 0x7, 0x1, 0x1, 0x7 }  // 9
+// High-contrast, maximum-legibility 3x7 bitmap font for digits 0-9
+// 3 bits wide per row (bits 2..0), 7 rows tall (rows 4..10 in 16x16 grid)
+static const unsigned char DIGIT_FONT_3X7[10][7] = {
+    { 0x7, 0x5, 0x5, 0x5, 0x5, 0x5, 0x7 }, // 0: tall open oval counter
+    { 0x2, 0x6, 0x2, 0x2, 0x2, 0x2, 0x7 }, // 1: classic balanced serif 1
+    { 0x7, 0x1, 0x1, 0x7, 0x4, 0x4, 0x7 }, // 2: symmetric open loops
+    { 0x7, 0x1, 0x1, 0x7, 0x1, 0x1, 0x7 }, // 3: distinct open curves
+    { 0x5, 0x5, 0x5, 0x7, 0x1, 0x1, 0x1 }, // 4: bold open counter
+    { 0x7, 0x4, 0x4, 0x7, 0x1, 0x1, 0x7 }, // 5: symmetric open loops
+    { 0x7, 0x4, 0x4, 0x7, 0x5, 0x5, 0x7 }, // 6: clear open top stem, distinct bowl
+    { 0x7, 0x1, 0x1, 0x2, 0x2, 0x4, 0x4 }, // 7: smooth 2-row diagonal descent
+    { 0x7, 0x5, 0x5, 0x7, 0x5, 0x5, 0x7 }, // 8: dual distinct 2-row open counters
+    { 0x7, 0x5, 0x5, 0x7, 0x1, 0x1, 0x7 }  // 9: distinct top bowl, clean bottom closure
 };
 
-// Contour-proportioned 75% Mechanical Keyboard glyph (8x6, rows 5..10, cols 4..11)
-// Clean iconic silhouette with distinct key clusters and spacebar
-static const char *KEYBOARD_ROWS[6] = {
-    "01111110", // Row 5:  rounded top chassis
-    "11011011", // Row 6:  distinct top key clusters
-    "10100101", // Row 7:  staggered alphanumeric keys
-    "10000001", // Row 8:  chassis separator
-    "10111101", // Row 9:  dedicated wide spacebar
-    "01111110"  // Row 10: rounded bottom chassis
+// Contour-proportioned 75% Mechanical Keyboard glyph (10x7, rows 4..10, cols 3..12)
+// Bold iconic silhouette filling the expanded inner circle
+static const char *KEYBOARD_ROWS[7] = {
+    "0111111110", // Row 4: rounded top chassis
+    "1101101101", // Row 5: top cluster / function keys
+    "1010101011", // Row 6: upper alphanumeric row
+    "1101010101", // Row 7: lower alphanumeric row
+    "1000000001", // Row 8: chassis separator
+    "1011111101", // Row 9: dedicated wide spacebar cluster
+    "0111111110"  // Row 10: rounded bottom chassis
 };
 
-// Energetic charging lightning bolt overlay (5x6, rows 5..10, cols 6..10)
-static const char *LIGHTNING_ROWS[6] = {
-    "00110", // Row 5
-    "01100", // Row 6
-    "11110", // Row 7
-    "00111", // Row 8
-    "00110", // Row 9
+// Energetic charging lightning bolt overlay (5x7, rows 4..10, cols 5..9)
+static const char *LIGHTNING_ROWS[7] = {
+    "00110", // Row 4
+    "01100", // Row 5
+    "11110", // Row 6
+    "00111", // Row 7
+    "00110", // Row 8
+    "01100", // Row 9
     "01000"  // Row 10
 };
 
@@ -166,31 +168,31 @@ HICON IconGen_CreateBatteryIcon(
     unsigned char fgG = lightTaskbar ? 28 : 255;
     unsigned char fgB = lightTaskbar ? 28 : 255;
 
-    // Track ring color (dim background circle)
+    // Track ring color (clean, distinct baseline circle)
     unsigned char trackR = lightTaskbar ? 0 : 255;
     unsigned char trackG = lightTaskbar ? 0 : 255;
     unsigned char trackB = lightTaskbar ? 0 : 255;
-    float trackAlpha = isDisconnected ? 0.20f : (isSleeping ? 0.26f : 0.38f);
+    float trackAlpha = isDisconnected ? 0.25f : (isSleeping ? 0.35f : 0.55f);
 
-    // Determine Active Arc Colors matching user reference image
-    unsigned char arcR = 34, arcG = 197, arcB = 94; // Vibrant emerald green default
+    // Active Arc Colors: high-luminance, vibrant palette tailored for taskbars
+    unsigned char arcR = 46, arcG = 213, arcB = 115; // Crisp emerald default (lum ~175)
     if (isCharging) {
-        // Bright emerald-cyan charging pulse
-        arcR = 16; arcG = 185; arcB = 129;
+        // Vivid cyan-emerald pulse (lum ~185)
+        arcR = 20; arcG = 220; arcB = 160;
     } else if (isSleeping || isDisconnected || batteryPercent < 0) {
         arcR = fgR; arcG = fgG; arcB = fgB;
     } else if (batteryPercent <= 20) {
-        // Alert Red
-        arcR = 239; arcG = 68; arcB = 68;
+        // High-contrast alert coral red
+        arcR = 248; arcG = 81; arcB = 73;
     } else if (batteryPercent <= 40) {
-        // Warning Amber
-        arcR = 245; arcG = 158; arcB = 11;
+        // Electric warning amber
+        arcR = 251; arcG = 191; arcB = 36;
     } else if (batteryPercent > 85) {
-        // High battery: crisp bright mint/emerald
+        // Crisp high-battery mint emerald
         arcR = 52; arcG = 211; arcB = 153;
     } else {
-        // Standard healthy green
-        arcR = 34; arcG = 197; arcB = 94;
+        // Healthy green
+        arcR = 46; arcG = 213; arcB = 115;
     }
 
     // Breathing pulse calculation when charging
@@ -206,10 +208,11 @@ HICON IconGen_CreateBatteryIcon(
     float pxStep = 1.0f / halfSize;
 
     // Ring proportions:
-    // Radius = 0.84, Thickness = 0.26
-    // Prominent, bold ~2.1px arc with substantial negative space for the center glyph
-    const float ringRadius = 0.84f;
-    const float ringThickness = 0.26f;
+    // Radius = 0.885, Thickness = 0.23
+    // Expands outer boundary to full 16x16 canvas edge, maximizing perceived size
+    // and widening the inner clearance zone to ~12.3px for larger, bolder center content
+    const float ringRadius = 0.885f;
+    const float ringThickness = 0.23f;
     const float halfThickness = ringThickness * 0.5f;
 
     int effPercent = (batteryPercent < 0) ? 0 : (batteryPercent > 100 ? 100 : batteryPercent);
@@ -221,7 +224,7 @@ HICON IconGen_CreateBatteryIcon(
     float capEndX = ringRadius * sinf(maxAngle);
     float capEndY = -ringRadius * cosf(maxAngle);
 
-    // 1. RENDER CIRCLE INDICATOR RING
+    // 1. RENDER CIRCLE INDICATOR RING (Seamless Active Arc Overlaid on Baseline Track)
     for (int y = 0; y < size; y++) {
         for (int x = 0; x < size; x++) {
             float u = ((float)x + 0.5f - halfSize) / halfSize;
@@ -260,20 +263,25 @@ HICON IconGen_CreateBatteryIcon(
                 }
             }
 
-            float pA, pR, pG, pB;
+            // Layer active arc cleanly over the full continuous baseline track
+            float tAlpha = ringCoverage * trackAlpha;
+            float aAlpha = 0.0f;
             if (inArc) {
-                pR = (float)arcR; pG = (float)arcG; pB = (float)arcB;
                 float arcAlpha = isSleeping ? 0.38f : (isCharging ? breathMultiplier : 1.0f);
-                pA = arcCoverage * 255.0f * arcAlpha;
-            } else {
-                pR = (float)trackR; pG = (float)trackG; pB = (float)trackB;
-                pA = ringCoverage * 255.0f * trackAlpha;
+                aAlpha = arcCoverage * arcAlpha;
             }
 
-            unsigned char a = (unsigned char)ClampF(pA, 0.0f, 255.0f);
-            unsigned char r = (unsigned char)(pR * (a / 255.0f));
-            unsigned char g = (unsigned char)(pG * (a / 255.0f));
-            unsigned char b = (unsigned char)(pB * (a / 255.0f));
+            float outA = aAlpha + tAlpha * (1.0f - aAlpha);
+            if (outA <= 0.0f) continue;
+
+            float pR = (float)arcR * aAlpha + (float)trackR * tAlpha * (1.0f - aAlpha);
+            float pG = (float)arcG * aAlpha + (float)trackG * tAlpha * (1.0f - aAlpha);
+            float pB = (float)arcB * aAlpha + (float)trackB * tAlpha * (1.0f - aAlpha);
+
+            unsigned char a = (unsigned char)ClampF(outA * 255.0f, 0.0f, 255.0f);
+            unsigned char r = (unsigned char)ClampF(pR, 0.0f, 255.0f);
+            unsigned char g = (unsigned char)ClampF(pG, 0.0f, 255.0f);
+            unsigned char b = (unsigned char)ClampF(pB, 0.0f, 255.0f);
 
             pixels[y * size + x] = (a << 24) | (r << 16) | (g << 8) | b;
         }
@@ -283,67 +291,69 @@ HICON IconGen_CreateBatteryIcon(
     float centerAlpha = isDisconnected ? 0.35f : (isSleeping ? 0.45f : 1.0f);
 
     if (centerStyle == ICON_CENTER_PERCENT && effPercent >= 0 && !isDisconnected) {
-        // High-contrast, well-proportioned numeric percentage (rows 5..10)
+        // High-contrast, maximum-legibility numeric percentage (rows 4..10, 7 rows tall)
         if (effPercent < 10) {
-            // Single digit: centered at col 6..8, row 5..10
-            for (int row = 0; row < 6; row++) {
-                unsigned char bits = DIGIT_FONT_3X6[effPercent][row];
+            // Single digit: centered at cols 6..8, rows 4..10
+            for (int row = 0; row < 7; row++) {
+                unsigned char bits = DIGIT_FONT_3X7[effPercent][row];
                 for (int col = 0; col < 3; col++) {
                     if (bits & (1 << (2 - col))) {
-                        DrawGridCell(pixels, size, 6 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
+                        DrawGridCell(pixels, size, 6 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
                     }
                 }
             }
         } else if (effPercent < 100) {
-            // Two digits: d1 at cols 4..6, d2 at cols 8..10, row 5..10
+            // Two digits: d1 at cols 4..6, d2 at cols 9..11 (2px gap, perfectly centered span 4..11), rows 4..10
             int d1 = effPercent / 10;
             int d2 = effPercent % 10;
-            for (int row = 0; row < 6; row++) {
-                unsigned char bits1 = DIGIT_FONT_3X6[d1][row];
-                unsigned char bits2 = DIGIT_FONT_3X6[d2][row];
+            for (int row = 0; row < 7; row++) {
+                unsigned char bits1 = DIGIT_FONT_3X7[d1][row];
+                unsigned char bits2 = DIGIT_FONT_3X7[d2][row];
                 for (int col = 0; col < 3; col++) {
                     if (bits1 & (1 << (2 - col))) {
-                        DrawGridCell(pixels, size, 4 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
+                        DrawGridCell(pixels, size, 4 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
                     }
                     if (bits2 & (1 << (2 - col))) {
-                        DrawGridCell(pixels, size, 8 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
+                        DrawGridCell(pixels, size, 9 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
                     }
                 }
             }
         } else {
-            // 100%: '1' spine at col 4, '0' at cols 6..8, '0' at cols 10..12, row 5..10
-            for (int row = 0; row < 6; row++) {
-                DrawGridCell(pixels, size, 4, 5 + row, fgR, fgG, fgB, centerAlpha);
-                if (row == 0) DrawGridCell(pixels, size, 3, 5 + row, fgR, fgG, fgB, centerAlpha);
+            // 100%: '1' spine at col 4 (serif at col 3), '0' at cols 6..8, '0' at cols 10..12, rows 4..10 (span 3..12)
+            for (int row = 0; row < 7; row++) {
+                DrawGridCell(pixels, size, 4, 4 + row, fgR, fgG, fgB, centerAlpha);
+                if (row == 0 || row == 1 || row == 6) {
+                    DrawGridCell(pixels, size, 3, 4 + row, fgR, fgG, fgB, centerAlpha);
+                }
 
-                unsigned char b0 = DIGIT_FONT_3X6[0][row];
+                unsigned char b0 = DIGIT_FONT_3X7[0][row];
                 for (int col = 0; col < 3; col++) {
                     if (b0 & (1 << (2 - col))) {
-                        DrawGridCell(pixels, size, 6 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
-                        DrawGridCell(pixels, size, 10 + col, 5 + row, fgR, fgG, fgB, centerAlpha);
+                        DrawGridCell(pixels, size, 6 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+                        DrawGridCell(pixels, size, 10 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
                     }
                 }
             }
         }
     } else {
-        // Contour-proportioned 75% Mechanical Keyboard Glyph (8x6, rows 5..10, cols 4..11)
-        for (int r = 0; r < 6; r++) {
+        // Contour-proportioned 75% Mechanical Keyboard Glyph (10x7, rows 4..10, cols 3..12)
+        for (int r = 0; r < 7; r++) {
             const char *line = KEYBOARD_ROWS[r];
-            for (int c = 0; c < 8; c++) {
+            for (int c = 0; c < 10; c++) {
                 if (line[c] == '1') {
-                    DrawGridCell(pixels, size, 4 + c, 5 + r, fgR, fgG, fgB, centerAlpha);
+                    DrawGridCell(pixels, size, 3 + c, 4 + r, fgR, fgG, fgB, centerAlpha);
                 }
             }
         }
 
         // Active charging overlay: vivid electric gold lightning bolt
         if (isCharging) {
-            float boltAlpha = (0.80f + 0.20f * breathMultiplier);
-            for (int r = 0; r < 6; r++) {
+            float boltAlpha = (0.85f + 0.15f * breathMultiplier);
+            for (int r = 0; r < 7; r++) {
                 const char *bline = LIGHTNING_ROWS[r];
                 for (int c = 0; c < 5; c++) {
                     if (bline[c] == '1') {
-                        DrawGridCell(pixels, size, 6 + c, 5 + r, 251, 191, 36, boltAlpha);
+                        DrawGridCell(pixels, size, 5 + c, 4 + r, 251, 191, 36, boltAlpha);
                     }
                 }
             }
