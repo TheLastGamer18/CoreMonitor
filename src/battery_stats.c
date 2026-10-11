@@ -85,7 +85,7 @@ void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isSleeping, B
         return;
     }
 
-    double deltaSec = difftime(now, s_lastTimestamp);
+    double deltaSec = (double)(now - s_lastTimestamp);
 
     // Require at least 60 seconds of elapsed time between rate evaluations
     if (deltaSec < 60.0) {
@@ -158,9 +158,9 @@ BOOL BatteryStats_GetDischargeTimeRemaining(int currentPercent, int *outMinutes)
     return TRUE;
 }
 
-BOOL BatteryStats_GetChargeTimeTo85(int currentPercent, int *outMinutes) {
+static BOOL CalcTimeToPercent(int currentPercent, int targetPercent, int *outMinutes) {
     if (!outMinutes) return FALSE;
-    if (currentPercent >= 85) {
+    if (currentPercent >= targetPercent) {
         *outMinutes = 0;
         return TRUE;
     }
@@ -168,32 +168,18 @@ BOOL BatteryStats_GetChargeTimeTo85(int currentPercent, int *outMinutes) {
         *outMinutes = 0;
         return FALSE;
     }
-
-    double delta = (double)(85 - currentPercent);
-    double hours = delta / s_chargeRatePerHour;
+    double hours = (double)(targetPercent - currentPercent) / s_chargeRatePerHour;
     int mins = (int)(hours * 60.0 + 0.5);
-    if (mins < 1) mins = 1;
-    *outMinutes = mins;
+    *outMinutes = (mins < 1) ? 1 : mins;
     return TRUE;
 }
 
-BOOL BatteryStats_GetChargeTimeToFull(int currentPercent, int *outMinutes) {
-    if (!outMinutes) return FALSE;
-    if (currentPercent >= 100) {
-        *outMinutes = 0;
-        return TRUE;
-    }
-    if (s_chargeRatePerHour <= 1.0) {
-        *outMinutes = 0;
-        return FALSE;
-    }
+BOOL BatteryStats_GetChargeTimeTo85(int currentPercent, int *outMinutes) {
+    return CalcTimeToPercent(currentPercent, 85, outMinutes);
+}
 
-    double delta = (double)(100 - currentPercent);
-    double hours = delta / s_chargeRatePerHour;
-    int mins = (int)(hours * 60.0 + 0.5);
-    if (mins < 1) mins = 1;
-    *outMinutes = mins;
-    return TRUE;
+BOOL BatteryStats_GetChargeTimeToFull(int currentPercent, int *outMinutes) {
+    return CalcTimeToPercent(currentPercent, 100, outMinutes);
 }
 
 static void FormatMinutesToText(int totalMinutes, WCHAR *buf, DWORD maxLen) {

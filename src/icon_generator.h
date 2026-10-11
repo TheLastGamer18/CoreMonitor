@@ -9,7 +9,8 @@ extern "C" {
 
 typedef enum {
     ICON_CENTER_KEYBOARD = 0,
-    ICON_CENTER_PERCENT
+    ICON_CENTER_PERCENT,
+    ICON_CENTER_RING_ONLY
 } CenterIconStyle;
 
 // Checks whether Windows taskbar currently uses light theme

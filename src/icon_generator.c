@@ -23,26 +23,25 @@ static const unsigned char DIGIT_FONT_3X7[10][7] = {
 };
 
 // Contour-proportioned 75% Mechanical Keyboard glyph (10x7, rows 4..10, cols 3..12)
-// Bold iconic silhouette filling the expanded inner circle
-static const char *KEYBOARD_ROWS[7] = {
-    "0111111110", // Row 4: rounded top chassis
-    "1101101101", // Row 5: top cluster / function keys
-    "1010101011", // Row 6: upper alphanumeric row
-    "1101010101", // Row 7: lower alphanumeric row
-    "1000000001", // Row 8: chassis separator
-    "1011111101", // Row 9: dedicated wide spacebar cluster
-    "0111111110"  // Row 10: rounded bottom chassis
+static const unsigned short KEYBOARD_BITS[7] = {
+    0x1FE, // 0111111110
+    0x36D, // 1101101101
+    0x2AB, // 1010101011
+    0x355, // 1101010101
+    0x201, // 1000000001
+    0x2FD, // 1011111101
+    0x1FE  // 0111111110
 };
 
 // Energetic charging lightning bolt overlay (5x7, rows 4..10, cols 5..9)
-static const char *LIGHTNING_ROWS[7] = {
-    "00110", // Row 4
-    "01100", // Row 5
-    "11110", // Row 6
-    "00111", // Row 7
-    "00110", // Row 8
-    "01100", // Row 9
-    "01000"  // Row 10
+static const unsigned char LIGHTNING_BITS[7] = {
+    0x0C, // 00110
+    0x18, // 01100
+    0x1E, // 11110
+    0x07, // 00111
+    0x0C, // 00110
+    0x18, // 01100
+    0x08  // 01000
 };
 
 BOOL IconGen_IsTaskbarLight(void) {
@@ -62,20 +61,6 @@ BOOL IconGen_IsTaskbarLight(void) {
 }
 
 int IconGen_GetTargetIconSize(void) {
-    HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
-    if (hUser32) {
-        typedef int (WINAPI *GetSystemMetricsForDpi_t)(int, UINT);
-        typedef UINT (WINAPI *GetDpiForSystem_t)(void);
-        GetSystemMetricsForDpi_t pfnMetrics = (GetSystemMetricsForDpi_t)GetProcAddress(hUser32, "GetSystemMetricsForDpi");
-        GetDpiForSystem_t pfnDpi = (GetDpiForSystem_t)GetProcAddress(hUser32, "GetDpiForSystem");
-        if (pfnMetrics && pfnDpi) {
-            UINT dpi = pfnDpi();
-            if (dpi > 0) {
-                int cx = pfnMetrics(SM_CXSMICON, dpi);
-                if (cx >= 16) return cx;
-            }
-        }
-    }
     int cx = GetSystemMetrics(SM_CXSMICON);
     if (cx < 16) cx = 16;
     if (cx > 48) cx = 48;
@@ -208,12 +193,12 @@ HICON IconGen_CreateBatteryIcon(
     float pxStep = 1.0f / halfSize;
 
     // Ring proportions:
-    // Radius = 0.885, Thickness = 0.23
-    // Expands outer boundary to full 16x16 canvas edge, maximizing perceived size
-    // and widening the inner clearance zone to ~12.3px for larger, bolder center content
-    const float ringRadius = 0.885f;
-    const float ringThickness = 0.23f;
-    const float halfThickness = ringThickness * 0.5f;
+    // Normal mode: Thickness = 0.23, Radius = 0.885 (leaves ~12.3px center clearance for glyph/number)
+    // Ring-Only mode: Thickness = 0.34, Radius = 0.83 (expands ring width ~48% inward into empty center)
+    // Both modes share an exact 1.0 outer radius to maximize canvas utilization without clipping
+    float ringThickness = (centerStyle == ICON_CENTER_RING_ONLY) ? 0.34f : 0.23f;
+    float halfThickness = ringThickness * 0.5f;
+    float ringRadius = 1.0f - halfThickness;
 
     int effPercent = (batteryPercent < 0) ? 0 : (batteryPercent > 100 ? 100 : batteryPercent);
     float maxAngle = ((float)effPercent / 100.0f) * 2.0f * PI;
@@ -288,72 +273,74 @@ HICON IconGen_CreateBatteryIcon(
     }
 
     // 2. RENDER CENTER GLYPH
-    float centerAlpha = isDisconnected ? 0.35f : (isSleeping ? 0.45f : 1.0f);
+    if (centerStyle != ICON_CENTER_RING_ONLY) {
+        float centerAlpha = isDisconnected ? 0.35f : (isSleeping ? 0.45f : 1.0f);
 
-    if (centerStyle == ICON_CENTER_PERCENT && effPercent >= 0 && !isDisconnected) {
-        // High-contrast, maximum-legibility numeric percentage (rows 4..10, 7 rows tall)
-        if (effPercent < 10) {
-            // Single digit: centered at cols 6..8, rows 4..10
-            for (int row = 0; row < 7; row++) {
-                unsigned char bits = DIGIT_FONT_3X7[effPercent][row];
-                for (int col = 0; col < 3; col++) {
-                    if (bits & (1 << (2 - col))) {
-                        DrawGridCell(pixels, size, 6 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+        if (centerStyle == ICON_CENTER_PERCENT && effPercent >= 0 && !isDisconnected) {
+            // High-contrast, maximum-legibility numeric percentage (rows 4..10, 7 rows tall)
+            if (effPercent < 10) {
+                // Single digit: centered at cols 6..8, rows 4..10
+                for (int row = 0; row < 7; row++) {
+                    unsigned char bits = DIGIT_FONT_3X7[effPercent][row];
+                    for (int col = 0; col < 3; col++) {
+                        if (bits & (1 << (2 - col))) {
+                            DrawGridCell(pixels, size, 6 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+                        }
                     }
                 }
-            }
-        } else if (effPercent < 100) {
-            // Two digits: d1 at cols 4..6, d2 at cols 9..11 (2px gap, perfectly centered span 4..11), rows 4..10
-            int d1 = effPercent / 10;
-            int d2 = effPercent % 10;
-            for (int row = 0; row < 7; row++) {
-                unsigned char bits1 = DIGIT_FONT_3X7[d1][row];
-                unsigned char bits2 = DIGIT_FONT_3X7[d2][row];
-                for (int col = 0; col < 3; col++) {
-                    if (bits1 & (1 << (2 - col))) {
-                        DrawGridCell(pixels, size, 4 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+            } else if (effPercent < 100) {
+                // Two digits: d1 at cols 4..6, d2 at cols 9..11 (2px gap, perfectly centered span 4..11), rows 4..10
+                int d1 = effPercent / 10;
+                int d2 = effPercent % 10;
+                for (int row = 0; row < 7; row++) {
+                    unsigned char bits1 = DIGIT_FONT_3X7[d1][row];
+                    unsigned char bits2 = DIGIT_FONT_3X7[d2][row];
+                    for (int col = 0; col < 3; col++) {
+                        if (bits1 & (1 << (2 - col))) {
+                            DrawGridCell(pixels, size, 4 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+                        }
+                        if (bits2 & (1 << (2 - col))) {
+                            DrawGridCell(pixels, size, 9 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+                        }
                     }
-                    if (bits2 & (1 << (2 - col))) {
-                        DrawGridCell(pixels, size, 9 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+                }
+            } else {
+                // 100%: '1' spine at col 4 (serif at col 3), '0' at cols 6..8, '0' at cols 10..12, rows 4..10 (span 3..12)
+                for (int row = 0; row < 7; row++) {
+                    DrawGridCell(pixels, size, 4, 4 + row, fgR, fgG, fgB, centerAlpha);
+                    if (row == 0 || row == 1 || row == 6) {
+                        DrawGridCell(pixels, size, 3, 4 + row, fgR, fgG, fgB, centerAlpha);
+                    }
+
+                    unsigned char b0 = DIGIT_FONT_3X7[0][row];
+                    for (int col = 0; col < 3; col++) {
+                        if (b0 & (1 << (2 - col))) {
+                            DrawGridCell(pixels, size, 6 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+                            DrawGridCell(pixels, size, 10 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+                        }
                     }
                 }
             }
         } else {
-            // 100%: '1' spine at col 4 (serif at col 3), '0' at cols 6..8, '0' at cols 10..12, rows 4..10 (span 3..12)
-            for (int row = 0; row < 7; row++) {
-                DrawGridCell(pixels, size, 4, 4 + row, fgR, fgG, fgB, centerAlpha);
-                if (row == 0 || row == 1 || row == 6) {
-                    DrawGridCell(pixels, size, 3, 4 + row, fgR, fgG, fgB, centerAlpha);
-                }
-
-                unsigned char b0 = DIGIT_FONT_3X7[0][row];
-                for (int col = 0; col < 3; col++) {
-                    if (b0 & (1 << (2 - col))) {
-                        DrawGridCell(pixels, size, 6 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
-                        DrawGridCell(pixels, size, 10 + col, 4 + row, fgR, fgG, fgB, centerAlpha);
+            // Contour-proportioned 75% Mechanical Keyboard Glyph (10x7, rows 4..10, cols 3..12)
+            for (int r = 0; r < 7; r++) {
+                unsigned short bits = KEYBOARD_BITS[r];
+                for (int c = 0; c < 10; c++) {
+                    if (bits & (1 << (9 - c))) {
+                        DrawGridCell(pixels, size, 3 + c, 4 + r, fgR, fgG, fgB, centerAlpha);
                     }
                 }
             }
-        }
-    } else {
-        // Contour-proportioned 75% Mechanical Keyboard Glyph (10x7, rows 4..10, cols 3..12)
-        for (int r = 0; r < 7; r++) {
-            const char *line = KEYBOARD_ROWS[r];
-            for (int c = 0; c < 10; c++) {
-                if (line[c] == '1') {
-                    DrawGridCell(pixels, size, 3 + c, 4 + r, fgR, fgG, fgB, centerAlpha);
-                }
-            }
-        }
 
-        // Active charging overlay: vivid electric gold lightning bolt
-        if (isCharging) {
-            float boltAlpha = (0.85f + 0.15f * breathMultiplier);
-            for (int r = 0; r < 7; r++) {
-                const char *bline = LIGHTNING_ROWS[r];
-                for (int c = 0; c < 5; c++) {
-                    if (bline[c] == '1') {
-                        DrawGridCell(pixels, size, 5 + c, 4 + r, 251, 191, 36, boltAlpha);
+            // Active charging overlay: vivid electric gold lightning bolt
+            if (isCharging) {
+                float boltAlpha = (0.85f + 0.15f * breathMultiplier);
+                for (int r = 0; r < 7; r++) {
+                    unsigned char bbits = LIGHTNING_BITS[r];
+                    for (int c = 0; c < 5; c++) {
+                        if (bbits & (1 << (4 - c))) {
+                            DrawGridCell(pixels, size, 5 + c, 4 + r, 251, 191, 36, boltAlpha);
+                        }
                     }
                 }
             }

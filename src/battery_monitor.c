@@ -346,14 +346,12 @@ static int ScanURX_HID(USHORT targetPid, BOOL *outDeviceFound, char *outPath, DW
     int resultBattery = -1;
     if (outDeviceFound) *outDeviceFound = FALSE;
 
-    for (DWORD i = 0; SetupDiEnumDeviceInterfaces(devInfo, NULL, &hidGuid, i, &devData); i++) {
-        DWORD reqSize = 0;
-        SetupDiGetDeviceInterfaceDetailA(devInfo, &devData, NULL, 0, &reqSize, NULL);
-        PSP_DEVICE_INTERFACE_DETAIL_DATA_A detail = (PSP_DEVICE_INTERFACE_DETAIL_DATA_A)malloc(reqSize);
-        if (!detail) continue;
-        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_A);
+    BYTE detailBuffer[1024];
+    PSP_DEVICE_INTERFACE_DETAIL_DATA_A detail = (PSP_DEVICE_INTERFACE_DETAIL_DATA_A)detailBuffer;
+    detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_A);
 
-        if (SetupDiGetDeviceInterfaceDetailA(devInfo, &devData, detail, reqSize, NULL, NULL)) {
+    for (DWORD i = 0; SetupDiEnumDeviceInterfaces(devInfo, NULL, &hidGuid, i, &devData); i++) {
+        if (SetupDiGetDeviceInterfaceDetailA(devInfo, &devData, detail, sizeof(detailBuffer), NULL, NULL)) {
             if (strstr(detail->DevicePath, "36b0") || strstr(detail->DevicePath, "36B0")) {
                 // Open with 0 access to query attributes cleanly without locking device handles
                 HANDLE hDev = CreateFileA(detail->DevicePath, 0,
@@ -377,12 +375,8 @@ static int ScanURX_HID(USHORT targetPid, BOOL *outDeviceFound, char *outPath, DW
                                 s_HidD_FreePreparsedData(preparsed);
                                 CloseHandle(hDev);
 
-                                char devPathCopy[MAX_PATH * 2] = {0};
-                                strncpy(devPathCopy, detail->DevicePath, sizeof(devPathCopy) - 1);
-                                free(detail);
-
                                 if (queryBattery) {
-                                    resultBattery = QueryViaBattery(devPathCopy);
+                                    resultBattery = QueryViaBattery(detail->DevicePath);
                                 }
                                 break;
                             }
@@ -393,7 +387,6 @@ static int ScanURX_HID(USHORT targetPid, BOOL *outDeviceFound, char *outPath, DW
                 }
             }
         }
-        free(detail);
     }
 
     SetupDiDestroyDeviceInfoList(devInfo);

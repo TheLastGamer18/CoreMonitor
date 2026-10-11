@@ -30,12 +30,30 @@
 #define IDM_STATUS_EST    2003
 #define IDM_REFRESH       2004
 #define IDM_DETAILS       2005
-#define IDM_TOGGLE_STYLE     2007
-#define IDM_LOW_ALERT        2008
-#define IDM_LONGEVITY_ALERT  2009
-#define IDM_HIGH_ALERT       2010
-#define IDM_AUTOSTART        2011
-#define IDM_EXIT             2012
+
+// Icon styles (Submenu: Configure Icon)
+#define IDM_STYLE_RING_ONLY 2010
+#define IDM_STYLE_PERCENT   2011
+#define IDM_STYLE_KEYBOARD  2012
+
+// Low Battery Alert Submenu
+#define IDM_LOW_ENABLE      2020
+#define IDM_LOW_10          2021
+#define IDM_LOW_15          2022
+#define IDM_LOW_20          2023
+
+// Longevity Alert Submenu
+#define IDM_LONG_ENABLE     2030
+#define IDM_LONG_80         2031
+#define IDM_LONG_85         2032
+
+// Full Battery Alert Submenu
+#define IDM_FULL_ENABLE     2040
+#define IDM_FULL_95         2041
+#define IDM_FULL_100        2042
+
+#define IDM_AUTOSTART       2060
+#define IDM_EXIT            2062
 
 static const WCHAR *CLASS_NAME = L"CoreMonitor_Class";
 static const WCHAR *DETAILS_CLASS_NAME = L"CoreMonitor_DetailsClass";
@@ -76,11 +94,16 @@ typedef void (WINAPI *pfnFlushMenuThemes_t)(void);
 typedef BOOL (WINAPI *pfnShouldAppsUseDarkMode_t)(void);
 typedef HRESULT (WINAPI *pfnDwmSetWindowAttribute_t)(HWND, DWORD, LPCVOID, DWORD);
 
+typedef UINT (WINAPI *pfnGetDpiForWindow_t)(HWND);
+typedef HRESULT (WINAPI *pfnSetCurrentProcessExplicitAppUserModelID_t)(PCWSTR);
+
 static pfnSetPreferredAppMode_t s_pfnSetPreferredAppMode = NULL;
 static pfnAllowDarkModeForWindow_t s_pfnAllowDarkModeForWindow = NULL;
 static pfnFlushMenuThemes_t s_pfnFlushMenuThemes = NULL;
 static pfnShouldAppsUseDarkMode_t s_pfnShouldAppsUseDarkMode = NULL;
 static pfnDwmSetWindowAttribute_t s_pfnDwmSetWindowAttribute = NULL;
+static pfnGetDpiForWindow_t s_pfnGetDpiForWindow = NULL;
+static pfnSetCurrentProcessExplicitAppUserModelID_t s_pfnSetCurrentProcessExplicitAppUserModelID = NULL;
 
 static void InitDarkMode(void) {
     HMODULE hUxTheme = LoadLibraryW(L"uxtheme.dll");
@@ -102,6 +125,16 @@ static void InitDarkMode(void) {
         if (s_pfnFlushMenuThemes) {
             s_pfnFlushMenuThemes();
         }
+    }
+
+    HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
+    if (hUser32) {
+        s_pfnGetDpiForWindow = (pfnGetDpiForWindow_t)GetProcAddress(hUser32, "GetDpiForWindow");
+    }
+
+    HMODULE hShell = LoadLibraryW(L"shell32.dll");
+    if (hShell) {
+        s_pfnSetCurrentProcessExplicitAppUserModelID = (pfnSetCurrentProcessExplicitAppUserModelID_t)GetProcAddress(hShell, "SetCurrentProcessExplicitAppUserModelID");
     }
 
     HMODULE hDwm = LoadLibraryW(L"dwmapi.dll");
@@ -223,6 +256,16 @@ static void FormatRichTooltip(WCHAR *outTip, DWORD maxLen) {
         _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [%s]\n%s", effPercent, s_currentStatus.modeName, estBuf);
     }
     outTip[maxLen - 1] = L'\0';
+}
+
+static void ShowTrayToast(const WCHAR *title, const WCHAR *msg, DWORD flags) {
+    s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
+    wcsncpy(s_nid.szInfoTitle, title, 63);
+    s_nid.szInfoTitle[63] = L'\0';
+    wcsncpy(s_nid.szInfo, msg, 255);
+    s_nid.szInfo[255] = L'\0';
+    s_nid.dwInfoFlags = flags;
+    Shell_NotifyIconW(NIM_MODIFY, &s_nid);
 }
 
 static void UpdateTrayIcon(void) {
@@ -350,7 +393,13 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             FillRect(memDC, &rc, hBrBg);
             DeleteObject(hBrBg);
 
-            int dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+            int dpi = 96;
+            if (s_pfnGetDpiForWindow) {
+                dpi = s_pfnGetDpiForWindow(hWnd);
+            }
+            if (dpi <= 0) {
+                dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+            }
             if (dpi <= 0) dpi = 96;
             #define SC(val) MulDiv((val), dpi, 96)
 
@@ -386,7 +435,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             SelectObject(memDC, hFontSub);
             SetTextColor(memDC, colTextSec);
-            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry", 29);
+            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.2.0", 38);
 
             // Live status & battery badge
             int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
@@ -506,8 +555,8 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             BOOL isFiltering = BatteryMonitor_IsFilteringTransient();
             BOOL isCalibrated = BatteryStats_IsCalibrated();
-            const WCHAR *telemStatus = isFiltering ? L"Stabilizing (Filtering ADC transient)"
-                                                   : (isCalibrated ? L"Calibrated (Live profiling)" : L"Calibrating (Learning)");
+            const WCHAR *telemStatus = isFiltering ? L"Stabilizing (ADC filter)"
+                                                   : (isCalibrated ? L"Calibrated (Profiling)" : L"Calibrating (Learning)");
             COLORREF colTelem = isFiltering ? (isDark ? RGB(251, 191, 36) : RGB(217, 119, 6))
                                             : (isCalibrated ? colAccent : colMuted);
 
@@ -517,22 +566,29 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             curY += card2H + SC(10);
 
             // Card 3: Alert Configurations
-            int card3H = SC(114);
+            int card3H = SC(112);
             DrawCardPanel(memDC, pad, curY, cardW, card3H, colCardBg, colBorder, SC(8));
             SelectObject(memDC, hFontSecHdr);
             SetTextColor(memDC, colHeader);
             TextOutW(memDC, pad + SC(12), curY + SC(8), L"ALERT CONFIGURATIONS", 20);
 
             innerY = curY + SC(28);
-            DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Low Battery Alert (<=20%)",
+            WCHAR alertLabel[64];
+            _snwprintf(alertLabel, 64, L"Low Battery Alert (<=%d%%)", g_Settings.lowAlertThreshold);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, alertLabel,
                         g_Settings.lowBatteryAlert ? L"Enabled" : L"Disabled",
                         colTextSec, g_Settings.lowBatteryAlert ? colAccent : colMuted, hFontRow);
-            DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Longevity Alert (85%)",
+
+            _snwprintf(alertLabel, 64, L"Longevity Alert (%d%%)", g_Settings.longevityAlertThreshold);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, alertLabel,
                         g_Settings.longevityAlert ? L"Enabled" : L"Disabled",
                         colTextSec, g_Settings.longevityAlert ? colAccent : colMuted, hFontRow);
-            DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, L"High Battery Alert (100%)",
+
+            _snwprintf(alertLabel, 64, L"Full Battery Alert (%d%%)", g_Settings.highAlertThreshold);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, alertLabel,
                         g_Settings.highBatteryAlert ? L"Enabled" : L"Disabled",
                         colTextSec, g_Settings.highBatteryAlert ? colAccent : colMuted, hFontRow);
+
             DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Start with Windows",
                         g_Settings.startWithWindows ? L"Enabled" : L"Disabled",
                         colTextSec, g_Settings.startWithWindows ? colAccent : colMuted, hFontRow);
@@ -637,7 +693,9 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 static void ShowDetailsDialog(HWND hWnd) {
     if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
         ShowWindow(s_hDetailsWnd, SW_RESTORE);
+        SetWindowPos(s_hDetailsWnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         SetForegroundWindow(s_hDetailsWnd);
+        BringWindowToTop(s_hDetailsWnd);
         InvalidateRect(s_hDetailsWnd, NULL, TRUE);
         return;
     }
@@ -656,7 +714,13 @@ static void ShowDetailsDialog(HWND hWnd) {
     }
 
     HDC hdc = GetDC(NULL);
-    int dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+    int dpi = 96;
+    if (s_pfnGetDpiForWindow && s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
+        dpi = s_pfnGetDpiForWindow(s_hDetailsWnd);
+    }
+    if (dpi <= 0) {
+        dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+    }
     ReleaseDC(NULL, hdc);
     if (dpi <= 0) dpi = 96;
 
@@ -758,65 +822,52 @@ static void PollAndUpdate(void) {
     // Record battery observation in statistics engine
     BatteryStats_Record(effPercent, s_currentStatus.isCharging, s_currentStatus.isSleeping, isDisconnected);
 
-    // 1. Low battery alert (threshold: <= 20% while discharging)
+    WCHAR toastBuf[256];
+
+    // 1. Low battery alert (configurable threshold: <= lowAlertThreshold while discharging)
     if (g_Settings.lowBatteryAlert &&
         s_currentStatus.batteryPercent > 0 &&
-        s_currentStatus.batteryPercent <= 20 &&
+        s_currentStatus.batteryPercent <= g_Settings.lowAlertThreshold &&
         !s_currentStatus.isCharging &&
         !isDisconnected) {
 
         if (!g_Settings.lowAlertShownForDischarge) {
-            s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
-            wcsncpy(s_nid.szInfoTitle, L"URX Core75 - Low Battery Alert", 63);
-            s_nid.szInfoTitle[63] = L'\0';
-            _snwprintf(s_nid.szInfo, 255, L"Battery is down to %d%%. Connect the USB cable to charge.", s_currentStatus.batteryPercent);
-            s_nid.szInfo[255] = L'\0';
-            s_nid.dwInfoFlags = NIIF_WARNING;
-            Shell_NotifyIconW(NIM_MODIFY, &s_nid);
+            _snwprintf(toastBuf, 255, L"Battery is down to %d%%. Connect the USB cable to charge.", s_currentStatus.batteryPercent);
+            ShowTrayToast(L"URX Core75 - Low Battery Alert", toastBuf, NIIF_WARNING);
             g_Settings.lowAlertShownForDischarge = TRUE;
         }
-    } else if (s_currentStatus.batteryPercent > 25 || s_currentStatus.isCharging) {
+    } else if (s_currentStatus.batteryPercent > (g_Settings.lowAlertThreshold + 5) || s_currentStatus.isCharging) {
         g_Settings.lowAlertShownForDischarge = FALSE;
     }
 
-    // 2. Battery longevity alert (threshold: >= 85% while charging to preserve lithium lifespan)
+    // 2. Battery longevity alert (configurable threshold: >= longevityAlertThreshold while charging)
     if (g_Settings.longevityAlert &&
-        s_currentStatus.batteryPercent >= 85 &&
-        (s_currentStatus.batteryPercent < 100 || !g_Settings.highBatteryAlert) &&
+        s_currentStatus.batteryPercent >= g_Settings.longevityAlertThreshold &&
+        (s_currentStatus.batteryPercent < g_Settings.highAlertThreshold || !g_Settings.highBatteryAlert) &&
         s_currentStatus.isCharging &&
         !isDisconnected) {
 
         if (!g_Settings.longevityAlertShownForCharge) {
-            s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
-            wcsncpy(s_nid.szInfoTitle, L"URX Core75 - Battery Longevity Alert", 63);
-            s_nid.szInfoTitle[63] = L'\0';
-            _snwprintf(s_nid.szInfo, 255, L"Battery reached %d%%. Disconnect charger to protect lithium longevity.", s_currentStatus.batteryPercent);
-            s_nid.szInfo[255] = L'\0';
-            s_nid.dwInfoFlags = NIIF_INFO;
-            Shell_NotifyIconW(NIM_MODIFY, &s_nid);
+            _snwprintf(toastBuf, 255, L"Battery reached %d%%. Disconnect charger to protect lithium longevity.", s_currentStatus.batteryPercent);
+            ShowTrayToast(L"URX Core75 - Battery Longevity Alert", toastBuf, NIIF_INFO);
             g_Settings.longevityAlertShownForCharge = TRUE;
         }
-    } else if (s_currentStatus.batteryPercent < 80 || !s_currentStatus.isCharging) {
+    } else if (s_currentStatus.batteryPercent < (g_Settings.longevityAlertThreshold - 5) || !s_currentStatus.isCharging) {
         g_Settings.longevityAlertShownForCharge = FALSE;
     }
 
-    // 3. High battery alert (threshold: 100% while charging)
+    // 3. High battery alert (configurable threshold: >= highAlertThreshold while charging)
     if (g_Settings.highBatteryAlert &&
-        s_currentStatus.batteryPercent >= 100 &&
+        s_currentStatus.batteryPercent >= g_Settings.highAlertThreshold &&
         s_currentStatus.isCharging &&
         !isDisconnected) {
 
         if (!g_Settings.highAlertShownForCharge) {
-            s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
-            wcsncpy(s_nid.szInfoTitle, L"URX Core75 - High Battery Alert", 63);
-            s_nid.szInfoTitle[63] = L'\0';
-            _snwprintf(s_nid.szInfo, 255, L"Battery reached %d%%. Fully charged and ready for wireless use.", s_currentStatus.batteryPercent);
-            s_nid.szInfo[255] = L'\0';
-            s_nid.dwInfoFlags = NIIF_INFO;
-            Shell_NotifyIconW(NIM_MODIFY, &s_nid);
+            _snwprintf(toastBuf, 255, L"Battery reached %d%%. Fully charged and ready for wireless use.", s_currentStatus.batteryPercent);
+            ShowTrayToast(L"URX Core75 - High Battery Alert", toastBuf, NIIF_INFO);
             g_Settings.highAlertShownForCharge = TRUE;
         }
-    } else if (s_currentStatus.batteryPercent < 95 || !s_currentStatus.isCharging) {
+    } else if (s_currentStatus.batteryPercent < (g_Settings.highAlertThreshold - 5) || !s_currentStatus.isCharging) {
         g_Settings.highAlertShownForCharge = FALSE;
     }
 
@@ -907,33 +958,54 @@ static void ShowContextMenu(HWND hWnd) {
 
     AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
 
-    // Icon style toggle
-    UINT styleFlags = MF_STRING;
-    if (g_Settings.centerStyle == ICON_CENTER_PERCENT) {
-        styleFlags |= MF_CHECKED;
-    }
-    AppendMenuW(hMenu, styleFlags, IDM_TOGGLE_STYLE, L"Show Number in Icon");
+    // 1. Configure Icon expandable submenu
+    HMENU hIconMenu = CreatePopupMenu();
+    AppendMenuW(hIconMenu, (g_Settings.centerStyle == ICON_CENTER_RING_ONLY ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_STYLE_RING_ONLY, L"Show Ring-Only");
+    AppendMenuW(hIconMenu, (g_Settings.centerStyle == ICON_CENTER_PERCENT ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_STYLE_PERCENT, L"Show Number");
+    AppendMenuW(hIconMenu, (g_Settings.centerStyle == ICON_CENTER_KEYBOARD ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_STYLE_KEYBOARD, L"Show Keyboard");
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hIconMenu, L"Configure Icon");
 
-    // Low battery alert toggle
-    UINT lowFlags = MF_STRING;
-    if (g_Settings.lowBatteryAlert) {
-        lowFlags |= MF_CHECKED;
-    }
-    AppendMenuW(hMenu, lowFlags, IDM_LOW_ALERT, L"Low Battery Alert (<=20%)");
+    // 2. Low Battery Alert submenu
+    HMENU hLowMenu = CreatePopupMenu();
+    AppendMenuW(hLowMenu, (g_Settings.lowBatteryAlert ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_LOW_ENABLE, L"Enabled");
+    AppendMenuW(hLowMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hLowMenu, (g_Settings.lowAlertThreshold == 10 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_LOW_10, L"10%");
+    AppendMenuW(hLowMenu, (g_Settings.lowAlertThreshold == 15 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_LOW_15, L"15%");
+    AppendMenuW(hLowMenu, (g_Settings.lowAlertThreshold == 20 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_LOW_20, L"20%");
+    WCHAR subMenuLabel[64];
+    _snwprintf(subMenuLabel, 64, L"Low Battery Alert (<=%d%%)", g_Settings.lowAlertThreshold);
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hLowMenu, subMenuLabel);
 
-    // Battery longevity alert toggle
-    UINT longevityFlags = MF_STRING;
-    if (g_Settings.longevityAlert) {
-        longevityFlags |= MF_CHECKED;
-    }
-    AppendMenuW(hMenu, longevityFlags, IDM_LONGEVITY_ALERT, L"Battery Longevity Alert (85%)");
+    // 3. Battery Longevity Alert submenu
+    HMENU hLongMenu = CreatePopupMenu();
+    AppendMenuW(hLongMenu, (g_Settings.longevityAlert ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_LONG_ENABLE, L"Enabled");
+    AppendMenuW(hLongMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hLongMenu, (g_Settings.longevityAlertThreshold == 80 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_LONG_80, L"80%");
+    AppendMenuW(hLongMenu, (g_Settings.longevityAlertThreshold == 85 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_LONG_85, L"85%");
+    _snwprintf(subMenuLabel, 64, L"Battery Longevity Alert (%d%%)", g_Settings.longevityAlertThreshold);
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hLongMenu, subMenuLabel);
 
-    // High battery alert toggle
-    UINT highFlags = MF_STRING;
-    if (g_Settings.highBatteryAlert) {
-        highFlags |= MF_CHECKED;
-    }
-    AppendMenuW(hMenu, highFlags, IDM_HIGH_ALERT, L"High Battery Alert (100%)");
+    // 4. Full Battery Alert submenu
+    HMENU hFullMenu = CreatePopupMenu();
+    AppendMenuW(hFullMenu, (g_Settings.highBatteryAlert ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_FULL_ENABLE, L"Enabled");
+    AppendMenuW(hFullMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hFullMenu, (g_Settings.highAlertThreshold == 95 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_FULL_95, L"95%");
+    AppendMenuW(hFullMenu, (g_Settings.highAlertThreshold == 100 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_FULL_100, L"100%");
+    _snwprintf(subMenuLabel, 64, L"Full Battery Alert (%d%%)", g_Settings.highAlertThreshold);
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFullMenu, subMenuLabel);
 
     // Run on startup toggle
     UINT autoFlags = MF_STRING;
@@ -1076,13 +1148,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 s_lastKeyboardInputTick = GetTickCount();
                 s_lastRadioQueryTick = 0;
                 PollAndUpdate();
-                s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
-                wcsncpy(s_nid.szInfoTitle, L"URX Core75 Status", 63);
-                s_nid.szInfoTitle[63] = L'\0';
                 FormatRichTooltip(s_nid.szInfo, 255);
-                s_nid.szInfo[255] = L'\0';
-                s_nid.dwInfoFlags = NIIF_INFO;
-                Shell_NotifyIconW(NIM_MODIFY, &s_nid);
+                ShowTrayToast(L"URX Core75 Status", s_nid.szInfo, NIIF_INFO);
             }
             break;
         }
@@ -1221,27 +1288,64 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 case IDM_DETAILS:
                     ShowDetailsDialog(hWnd);
                     break;
-                case IDM_TOGGLE_STYLE:
-                    g_Settings.centerStyle = (g_Settings.centerStyle == ICON_CENTER_KEYBOARD)
-                        ? ICON_CENTER_PERCENT : ICON_CENTER_KEYBOARD;
+                case IDM_STYLE_RING_ONLY:
+                    g_Settings.centerStyle = ICON_CENTER_RING_ONLY;
                     Settings_Save();
                     UpdateTrayIcon();
                     break;
-                case IDM_LOW_ALERT:
+                case IDM_STYLE_PERCENT:
+                    g_Settings.centerStyle = ICON_CENTER_PERCENT;
+                    Settings_Save();
+                    UpdateTrayIcon();
+                    break;
+                case IDM_STYLE_KEYBOARD:
+                    g_Settings.centerStyle = ICON_CENTER_KEYBOARD;
+                    Settings_Save();
+                    UpdateTrayIcon();
+                    break;
+
+                case IDM_LOW_ENABLE:
                     g_Settings.lowBatteryAlert = !g_Settings.lowBatteryAlert;
-                    Settings_Save();
-                    break;
-                case IDM_LONGEVITY_ALERT:
+                    goto save_and_invalidate;
+                case IDM_LOW_10:
+                    g_Settings.lowAlertThreshold = 10;
+                    goto save_and_invalidate;
+                case IDM_LOW_15:
+                    g_Settings.lowAlertThreshold = 15;
+                    goto save_and_invalidate;
+                case IDM_LOW_20:
+                    g_Settings.lowAlertThreshold = 20;
+                    goto save_and_invalidate;
+
+                case IDM_LONG_ENABLE:
                     g_Settings.longevityAlert = !g_Settings.longevityAlert;
-                    Settings_Save();
-                    break;
-                case IDM_HIGH_ALERT:
+                    goto save_and_invalidate;
+                case IDM_LONG_80:
+                    g_Settings.longevityAlertThreshold = 80;
+                    goto save_and_invalidate;
+                case IDM_LONG_85:
+                    g_Settings.longevityAlertThreshold = 85;
+                    goto save_and_invalidate;
+
+                case IDM_FULL_ENABLE:
                     g_Settings.highBatteryAlert = !g_Settings.highBatteryAlert;
-                    Settings_Save();
-                    break;
+                    goto save_and_invalidate;
+                case IDM_FULL_95:
+                    g_Settings.highAlertThreshold = 95;
+                    goto save_and_invalidate;
+                case IDM_FULL_100:
+                    g_Settings.highAlertThreshold = 100;
+                    goto save_and_invalidate;
+
                 case IDM_AUTOSTART:
                     Settings_SetAutostart(!g_Settings.startWithWindows);
+                    goto save_and_invalidate;
+
+                save_and_invalidate:
+                    Settings_Save();
+                    if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) InvalidateRect(s_hDetailsWnd, NULL, TRUE);
                     break;
+
                 case IDM_EXIT:
                     DestroyWindow(hWnd);
                     break;
@@ -1307,9 +1411,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // Initialize Session Lock and Screen Off power hooks
     InitPowerAndSessionHooks();
 
-    // 2. Single Instance Guard
+    // Set Process AppUserModelID for modern Windows Action Center toasts
+    if (s_pfnSetCurrentProcessExplicitAppUserModelID) {
+        s_pfnSetCurrentProcessExplicitAppUserModelID(L"CoreMonitor.URX75.BatteryMonitor");
+    }
+
+    // 2. Single Instance Guard (Wake existing instance to front)
     HANDLE hMutex = CreateMutexW(NULL, TRUE, MUTEX_NAME);
     if (!hMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND hExistingWnd = FindWindowW(CLASS_NAME, L"Core Monitor");
+        if (hExistingWnd) {
+            PostMessageW(hExistingWnd, WM_COMMAND, IDM_DETAILS, 0);
+        }
         if (hMutex) CloseHandle(hMutex);
         return 0; // Instance already running
     }

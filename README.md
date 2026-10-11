@@ -15,7 +15,7 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 
 | Right-Click Menu | Battery Details & Statistics Menu |
 | :---: | :---: |
-| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443069366603848/image.png?ex=6acb74b6&is=6aca2336&hm=63317789c9a134ab0eece2afd94238058f72f063a0415ac1166ac02762e6c9a7&" height="450" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443069798355014/image.png?ex=6acb74b6&is=6aca2336&hm=e71ed5b3be81b51de869a2b46373e93a61e78c39f956db826f7a46217af93090&" height="450" style="vertical-align: middle;"> |
+| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558443069366603848/image.png?ex=6acb74b6&is=6aca2336&hm=63317789c9a134ab0eece2afd94238058f72f063a0415ac1166ac02762e6c9a7&" height="450" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558815792622080140/image.png?ex=6acccfd6&is=6acb7e56&hm=12adffb817e175dfcc9ab4fa687990930a5be1800ce82b5d862cded95151a21d&" height="450" style="vertical-align: middle;"> |
 
 ---
 
@@ -25,18 +25,17 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 - **Firmware-Synced Sleep Protection:**
   - Synchronizes with keyboard sleep countdown via passive keystroke timing with zero radio traffic.
   - Upon waking up, instantly updates the tray icon.
-- **Tray Icon:**
-  - Circular battery ring with an active pulse when charging.
-  - Option to show either the keyboard icon or a live percentage number.
+- **Tray Icon & Configuration:**
+  - Dynamic circular battery ring with active breathing pulse when charging.
+  - Expandable **Configure Icon** menu: choose between **Ring-Only**, **Show Number**, or **Show Keyboard**.
   - Automatically matches Windows dark and light themes.
-- **Battery Alerts:**
-  - **Low (<= 20%):** Warns you when it is time to plug in.
-  - **Longevity (85%):** Notifies you to unplug and preserve battery health.
-  - **Full (100%):** Confirms the keyboard is fully charged.
-  - Alerts trigger once per cycle to prevent notification spam.
-- **Runtime Stats & Details:** Learns discharge rates, estimates remaining hours, and displays live firmware settings.
-- **Hardware Safe:**
-  - Strictly read-only memory queries.
+- **Configurable Battery Alerts:**
+  - **Low Battery Alert:** Selectable threshold (10%, 15%, or 20%) to warn you when battery runs low.
+  - **Longevity Alert:** Selectable threshold (80% or 85%) to preserve battery health.
+  - **Full Battery Alert:** Selectable threshold (95% or 100%) to confirm full charge.
+- **Runtime Stats & Details:** Learns discharge rates, estimates remaining hours, and displays live firmware telemetry.
+- **Hardware Safe & Ultra-Lean:**
+  - Strictly read-only memory queries with zero heap allocations during polling.
   - Pauses polling automatically when Windows is locked or monitors go to sleep.
   - Works alongside VIA Web Configurator without device conflicts.
 
@@ -63,7 +62,7 @@ build.bat
 Or compile manually:
 ```cmd
 windres -i res\resource.rc -o res\resource.o -I res
-gcc -Os -s -Wall -flto -fmerge-all-constants -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ident -mwindows -static-libgcc -Wl,--gc-sections -Wl,--file-alignment,512 -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi
+gcc -Os -s -Wall -flto -fmerge-all-constants -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ident -fomit-frame-pointer -falign-functions=1 -falign-jumps=1 -falign-loops=1 -mwindows -static-libgcc -Wl,--gc-sections -Wl,--file-alignment,512 -o CoreMonitor.exe src\main.c src\battery_monitor.c src\icon_generator.c src\settings.c src\battery_stats.c res\resource.o -lgdi32 -luser32 -lshell32 -lsetupapi
 ```
 
 ---
