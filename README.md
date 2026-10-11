@@ -1,4 +1,4 @@
-<img width="268" height="110" alt="image" src="https://github.com/user-attachments/assets/4e6fd7be-80e1-4ae7-a811-8d498cb28588" /># Core Monitor
+# Core Monitor
 
 An ultra-lightweight, dedicated Windows system tray battery monitor built specifically for the URX Core75 Keyboard.
 
