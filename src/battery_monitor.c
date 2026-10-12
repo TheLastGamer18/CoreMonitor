@@ -422,8 +422,8 @@ static int ScanURX_Bluetooth(void) {
     return battery;
 }
 
-void BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery) {
-    if (!outStatus) return;
+BOOL BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery) {
+    if (!outStatus) return FALSE;
     memset(outStatus, 0, sizeof(URXStatus));
     outStatus->batteryPercent = -1;
     outStatus->lastKnownPercent = s_lastKnownBattery;
@@ -465,7 +465,7 @@ void BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery) {
             wcscpy(outStatus->stateName, L"Fully Charged");
             _snwprintf(outStatus->statusText, 128, L"URX Core75: 100%% - [Wired - Fully Charged]");
         }
-        return;
+        return TRUE;
     }
 
     // 2. Priority 2: Check 2.4GHz Dongle Mode (VID 0x36B0, PID 0x3002)
@@ -513,7 +513,7 @@ void BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery) {
         outStatus->lastKnownPercent = effBatt;
 
         _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", effBatt);
-        return;
+        return (dongleBatt >= 0);
     }
 
     s_consecutiveFailures = 0;
@@ -531,7 +531,7 @@ void BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery) {
         wcscpy(outStatus->modeName, L"Bluetooth (BLE)");
         wcscpy(outStatus->stateName, L"Active");
         _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [Bluetooth]", effBatt);
-        return;
+        return TRUE;
     }
 
     // 4. Disconnected
@@ -544,4 +544,5 @@ void BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery) {
     wcscpy(outStatus->modeName, L"Disconnected");
     wcscpy(outStatus->stateName, L"Offline");
     _snwprintf(outStatus->statusText, 128, L"URX Core75: Disconnected");
+    return FALSE;
 }

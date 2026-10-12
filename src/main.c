@@ -78,7 +78,8 @@ static DWORD s_lastKeyboardInputTick = 0;
 static DWORD s_lastRadioQueryTick = 0;
 static DWORD s_lastManualToastTick = 0;
 static BOOL s_isResumingFromSuspend = FALSE;
-static HANDLE s_cachedUrxKeyboardDevice = NULL;
+static HANDLE s_cachedUrxDevice1 = NULL;
+static HANDLE s_cachedUrxDevice2 = NULL;
 static HANDLE s_cachedNonUrxKeyboardDevice = NULL;
 
 typedef enum {
@@ -444,7 +445,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             SelectObject(memDC, hFontSub);
             SetTextColor(memDC, colTextSec);
-            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.2.0", 38);
+            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.3.0", 38);
 
             // Live status & battery badge
             int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
@@ -770,18 +771,18 @@ static void PollAndUpdate(void) {
     BOOL isSleeping = FALSE;
     BOOL allowWirelessQuery = FALSE;
 
-    if (s_currentStatus.mode == MODE_2P4G) {
+    if (s_lastRadioQueryTick == 0) {
+        // Initial one-shot probe on startup or explicit manual refresh
+        allowWirelessQuery = TRUE;
+    } else if (s_currentStatus.mode == MODE_2P4G) {
         if (idleMs >= sleepMs) {
             // No keystrokes for firmware sleep timeout: keyboard is asleep!
             isSleeping = TRUE;
             allowWirelessQuery = FALSE; // STRICT: Zero over-the-air packets while asleep!
         } else {
             // Keyboard is active (user typed recently).
-            // Allow wireless query only if explicit manual refresh (s_lastRadioQueryTick == 0)
-            // or if actively typing within last 60s and at least 5 minutes passed since last radio query
-            if (s_lastRadioQueryTick == 0) {
-                allowWirelessQuery = TRUE;
-            } else if ((DWORD)(now - s_lastKeyboardInputTick) < 60000 && (DWORD)(now - s_lastRadioQueryTick) >= 300000) {
+            // Normal 5-minute interval: typing in last 60s and >= 5 minutes since last successful query
+            if ((DWORD)(now - s_lastKeyboardInputTick) < 60000 && (DWORD)(now - s_lastRadioQueryTick) >= 300000) {
                 allowWirelessQuery = TRUE;
             }
         }
@@ -789,10 +790,14 @@ static void PollAndUpdate(void) {
         allowWirelessQuery = TRUE;
     }
 
-    BatteryMonitor_Poll(&s_currentStatus, allowWirelessQuery);
+    BOOL liveQuerySuccess = BatteryMonitor_Poll(&s_currentStatus, allowWirelessQuery);
 
     if (allowWirelessQuery && s_currentStatus.mode == MODE_2P4G) {
+        // Record query attempt timestamp (prevents repeated timeout hanging if keyboard is switched off - Issue 4)
         s_lastRadioQueryTick = now;
+        if (liveQuerySuccess && s_lastKeyboardInputTick == 0) {
+            s_lastKeyboardInputTick = now;
+        }
     } else if (s_currentStatus.mode == MODE_WIRED) {
         s_lastRadioQueryTick = now;
         s_lastKeyboardInputTick = now;
@@ -800,6 +805,11 @@ static void PollAndUpdate(void) {
 
     // Set status text and states for 2.4G
     if (s_currentStatus.mode == MODE_2P4G) {
+        if (!liveQuerySuccess && (idleMs >= sleepMs || s_lastKeyboardInputTick == 0)) {
+            isSleeping = TRUE;
+        } else if (liveQuerySuccess) {
+            isSleeping = FALSE;
+        }
         s_currentStatus.isSleeping = isSleeping;
         int effBatt = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
         if (effBatt < 0) effBatt = 81;
@@ -1032,10 +1042,10 @@ static void ShowContextMenu(HWND hWnd) {
 #endif
 
 // Determines if raw input event originated from URX Core75 keyboard
-// Uses single-shot handle caching for zero-overhead (<1ns) subsequent lookups
+// Uses dual-handle caching (primary NKRO + media/knob endpoints) for zero-overhead (<1ns) subsequent lookups
 static BOOL IsURXKeyboardDevice(HANDLE hDevice) {
     if (!hDevice) return TRUE; // Safe fallback for synthesized/injected keystrokes
-    if (s_cachedUrxKeyboardDevice && hDevice == s_cachedUrxKeyboardDevice) {
+    if (hDevice == s_cachedUrxDevice1 || hDevice == s_cachedUrxDevice2) {
         return TRUE;
     }
     if (s_cachedNonUrxKeyboardDevice && hDevice == s_cachedNonUrxKeyboardDevice) {
@@ -1047,7 +1057,11 @@ static BOOL IsURXKeyboardDevice(HANDLE hDevice) {
     UINT ret = GetRawInputDeviceInfoA(hDevice, RIDI_DEVICENAME, name, &size);
     if (ret != (UINT)-1 && ret > 0) {
         if (strstr(name, "36b0") || strstr(name, "36B0")) {
-            s_cachedUrxKeyboardDevice = hDevice;
+            if (!s_cachedUrxDevice1) {
+                s_cachedUrxDevice1 = hDevice;
+            } else if (!s_cachedUrxDevice2 && hDevice != s_cachedUrxDevice1) {
+                s_cachedUrxDevice2 = hDevice;
+            }
             return TRUE;
         } else {
             s_cachedNonUrxKeyboardDevice = hDevice;
@@ -1109,7 +1123,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                         if (IsURXKeyboardDevice(raw.header.hDevice)) {
                             s_lastKeyboardInputTick = GetTickCount();
                             BatteryMonitor_ResetFailures();
-                            if (s_currentStatus.isSleeping && s_currentStatus.mode == MODE_2P4G) {
+                            if ((s_currentStatus.isSleeping || s_lastRadioQueryTick == 0) && s_currentStatus.mode == MODE_2P4G) {
                                 // Instantly wake up UI state to Active!
                                 s_currentStatus.isSleeping = FALSE;
                                 wcscpy(s_currentStatus.stateName, L"Active");
@@ -1120,11 +1134,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                                 if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
                                     InvalidateRect(s_hDetailsWnd, NULL, TRUE);
                                 }
-                                // If 5 minutes have elapsed since last radio query, schedule a gentle battery refresh 5s after wake-up keypress
-                                DWORD now = GetTickCount();
-                                if ((DWORD)(now - s_lastRadioQueryTick) >= 300000) {
-                                    SetTimer(hWnd, IDT_POLL_TIMER, 5000, NULL);
-                                }
+                                // Physical keystroke confirms keyboard is awake: sync immediately (150ms)
+                                s_lastRadioQueryTick = 0;
+                                SetTimer(hWnd, IDT_POLL_TIMER, 150, NULL);
                             }
                         }
                     }
@@ -1164,8 +1176,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_DEVICECHANGE: {
             // Hardware connect/disconnect event occurred!
             if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
-                s_cachedUrxKeyboardDevice = NULL;
+                s_cachedUrxDevice1 = NULL;
+                s_cachedUrxDevice2 = NULL;
                 s_cachedNonUrxKeyboardDevice = NULL;
+                s_lastRadioQueryTick = 0; // Fresh hardware connection: query immediately (Issue 2)
                 BatteryMonitor_InvalidateCache();
                 // Brief 150ms pause to let Windows PnP finish enumeration, then poll
                 SetTimer(hWnd, IDT_POLL_TIMER, 150, NULL);
@@ -1194,7 +1208,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (wParam == PBT_APMSUSPEND) {
                 // PC entering sleep: pause polling and invalidate cached device paths
                 s_isResumingFromSuspend = TRUE;
-                s_cachedUrxKeyboardDevice = NULL;
+                s_cachedUrxDevice1 = NULL;
+                s_cachedUrxDevice2 = NULL;
                 s_cachedNonUrxKeyboardDevice = NULL;
                 KillTimer(hWnd, IDT_POLL_TIMER);
                 BatteryStats_ResetSessionBaseline();
@@ -1203,10 +1218,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 // PC resumed from sleep:
                 // Passive USB presence check will immediately show clean last known battery in Asleep state
                 s_isResumingFromSuspend = TRUE;
-                s_cachedUrxKeyboardDevice = NULL;
+                s_cachedUrxDevice1 = NULL;
+                s_cachedUrxDevice2 = NULL;
                 s_cachedNonUrxKeyboardDevice = NULL;
                 s_lastKeyboardInputTick = 0;
-                s_lastRadioQueryTick = GetTickCount(); // Enforces quiet period
+                s_lastRadioQueryTick = 0; // Unqueried after resume: wake event or poll syncs true battery immediately (Issue 1)
                 s_currentStatus.isSleeping = TRUE;
                 wcscpy(s_currentStatus.stateName, L"Asleep");
                 BatteryStats_ResetSessionBaseline();
@@ -1230,7 +1246,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                         s_isDisplayOff = FALSE;
                         if (!s_isSessionLocked) {
                             s_lastKeyboardInputTick = 0;
-                            s_lastRadioQueryTick = GetTickCount();
+                            s_lastRadioQueryTick = 0; // Issue 1
                             // If PC is resuming from actual sleep, preserve the USB stabilization window
                             if (!s_isResumingFromSuspend) {
                                 BatteryMonitor_ResetFailures();
@@ -1255,7 +1271,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 s_isSessionLocked = FALSE;
                 if (!s_isDisplayOff) {
                     s_lastKeyboardInputTick = 0;
-                    s_lastRadioQueryTick = GetTickCount();
+                    s_lastRadioQueryTick = 0; // Issue 1
                     BatteryMonitor_ResetFailures();
                     BatteryMonitor_InvalidateCache();
                     SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
@@ -1288,7 +1304,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 case IDM_REFRESH:
                     s_lastKeyboardInputTick = GetTickCount();
                     s_lastRadioQueryTick = 0;
-                    s_cachedUrxKeyboardDevice = NULL;
+                    s_cachedUrxDevice1 = NULL;
+                    s_cachedUrxDevice2 = NULL;
                     s_cachedNonUrxKeyboardDevice = NULL;
                     BatteryMonitor_InvalidateCache();
                     PollAndUpdate();

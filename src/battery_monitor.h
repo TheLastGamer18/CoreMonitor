@@ -34,7 +34,8 @@ void BatteryMonitor_InvalidateCache(void);
 
 // Query URX Core75 status across Wired -> 2.4G -> Bluetooth
 // allowWirelessQuery: if FALSE, suppresses active 2.4GHz RF queries to allow keyboard to sleep
-void BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery);
+// Returns TRUE if live battery reading was successfully queried, FALSE otherwise
+BOOL BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery);
 
 // Get the detected sleep timer in minutes (default 3 if unqueried/offline)
 int BatteryMonitor_GetSleepTimerMinutes(void);
