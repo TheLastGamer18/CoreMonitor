@@ -46,6 +46,12 @@ void BatteryMonitor_ResetFailures(void);
 // Returns TRUE if an ADC transient/outlier is currently being stabilized
 BOOL BatteryMonitor_IsFilteringTransient(void);
 
+// Forces the next poll to directly accept the live reading without rebound/outlier filtering (for user "Refresh Now")
+void BatteryMonitor_ForceDirectNextPoll(void);
+
+// Resets session baseline so the next query establishes a fresh ground-truth reading (on fresh start / resume from sleep)
+void BatteryMonitor_ResetBaseline(void);
+
 // Cleanup any open handles or resources
 void BatteryMonitor_Cleanup(void);
 

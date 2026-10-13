@@ -122,26 +122,40 @@ static void LoadLastKnownBattery(void) {
         RegCloseKey(hKey);
     }
     if (s_lastKnownBattery < 0) {
-        s_lastKnownBattery = 81; // Safe initial fallback until first query
+        s_lastKnownBattery = -1; // Uninitialized until first live query
     }
 }
 
 static int s_pendingOutlierPercent = -1;
 static int s_consecutiveRebounds = 0;
+static BOOL s_freshBaselineNeeded = TRUE;
+static BOOL s_forceDirectReading = FALSE;
 
 BOOL BatteryMonitor_IsFilteringTransient(void) {
     return (s_pendingOutlierPercent >= 0);
 }
 
+void BatteryMonitor_ForceDirectNextPoll(void) {
+    s_forceDirectReading = TRUE;
+}
+
+void BatteryMonitor_ResetBaseline(void) {
+    s_freshBaselineNeeded = TRUE;
+    s_pendingOutlierPercent = -1;
+    s_consecutiveRebounds = 0;
+}
+
 static int FilterBatteryReading(int rawPercent, BOOL isCharging) {
     if (rawPercent < 0 || rawPercent > 100) return s_lastKnownBattery;
 
-    // First reading without prior baseline: accept immediately
-    if (s_lastKnownBattery < 0) {
-        s_lastKnownBattery = rawPercent;
-        SaveLastKnownBattery(rawPercent);
+    // Direct user-initiated refresh OR fresh start / wake: accept immediately
+    if (s_forceDirectReading || s_freshBaselineNeeded || s_lastKnownBattery < 0) {
+        s_forceDirectReading = FALSE;
+        s_freshBaselineNeeded = FALSE;
         s_pendingOutlierPercent = -1;
         s_consecutiveRebounds = 0;
+        s_lastKnownBattery = rawPercent;
+        SaveLastKnownBattery(rawPercent);
         return rawPercent;
     }
 
@@ -190,6 +204,8 @@ static int FilterBatteryReading(int rawPercent, BOOL isCharging) {
 
 BOOL BatteryMonitor_Init(void) {
     LoadLastKnownBattery();
+    s_freshBaselineNeeded = TRUE;
+    s_forceDirectReading = FALSE;
     if (!s_hHid) {
         s_hHid = LoadLibraryA("hid.dll");
         if (s_hHid) {
@@ -226,6 +242,7 @@ void BatteryMonitor_InvalidateCache(void) {
     s_consecutiveFailures = 0;
     s_pendingOutlierPercent = -1;
     s_consecutiveRebounds = 0;
+    s_freshBaselineNeeded = TRUE;
 }
 
 int BatteryMonitor_GetSleepTimerMinutes(void) {
@@ -508,11 +525,17 @@ BOOL BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery) {
         }
 
         int effBatt = s_lastKnownBattery;
-        if (effBatt < 0) effBatt = 81;
         outStatus->batteryPercent = effBatt;
         outStatus->lastKnownPercent = effBatt;
 
-        _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", effBatt);
+        if (effBatt >= 0) {
+            _snwprintf(outStatus->statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", effBatt);
+        } else {
+            _snwprintf(outStatus->statusText, 128, L"URX Core75: Connecting... - [2.4GHz Wireless]");
+        }
+        if (dongleBatt < 0) {
+            s_forceDirectReading = FALSE;
+        }
         return (dongleBatt >= 0);
     }
 
@@ -535,6 +558,7 @@ BOOL BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery) {
     }
 
     // 4. Disconnected
+    s_forceDirectReading = FALSE;
     outStatus->mode = MODE_DISCONNECTED;
     outStatus->batteryPercent = -1;
     outStatus->lastKnownPercent = s_lastKnownBattery;

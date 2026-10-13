@@ -16,6 +16,7 @@ static double s_chargeRatePerHour    = DEFAULT_CHARGE_RATE_PER_HOUR;
 
 static int s_lastPercent = -1;
 static BOOL s_lastWasCharging = FALSE;
+static BOOL s_lastWasSleeping = FALSE;
 static time_t s_lastTimestamp = 0;
 static BOOL s_hasLearnedDischarge = FALSE;
 static BOOL s_hasLearnedCharge = FALSE;
@@ -61,6 +62,7 @@ void BatteryStats_Save(void) {
 void BatteryStats_ResetSessionBaseline(void) {
     s_lastTimestamp = time(NULL);
     s_lastPercent = -1;
+    s_lastWasSleeping = FALSE;
 }
 
 void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isSleeping, BOOL isDisconnected) {
@@ -73,6 +75,7 @@ void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isSleeping, B
     if (s_lastPercent < 0 || s_lastTimestamp == 0) {
         s_lastPercent = batteryPercent;
         s_lastWasCharging = isCharging;
+        s_lastWasSleeping = isSleeping;
         s_lastTimestamp = now;
         return;
     }
@@ -81,6 +84,16 @@ void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isSleeping, B
     if (s_lastWasCharging != isCharging) {
         s_lastPercent = batteryPercent;
         s_lastWasCharging = isCharging;
+        s_lastWasSleeping = isSleeping;
+        s_lastTimestamp = now;
+        return;
+    }
+
+    // If keyboard transitioned into or out of sleep, reset the baseline observation
+    // (Prevents hours of inactive keyboard sleep from being counted as active typing discharge)
+    if (s_lastWasSleeping != isSleeping) {
+        s_lastPercent = batteryPercent;
+        s_lastWasSleeping = isSleeping;
         s_lastTimestamp = now;
         return;
     }
