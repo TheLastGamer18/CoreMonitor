@@ -3,43 +3,70 @@
 #include <time.h>
 
 #define STATS_REG_KEY L"Software\\CoreMonitor\\Stats"
+#define CURRENT_STATS_VERSION 2
 
 // Default initial rates:
-// Typical 3000mAh-4000mAh 75% keyboard:
-// Discharge: ~2.0% per hour (~50 hours battery life)
+// Typical 3000mAh-4000mAh wireless keyboard:
+// Discharge: ~0.50% per hour (~200 hours baseline before calibration)
 // Charge: ~35.0% per hour (~3 hours full charge)
-#define DEFAULT_DISCHARGE_RATE_PER_HOUR 2.0
+#define DEFAULT_DISCHARGE_RATE_PER_HOUR 0.50
 #define DEFAULT_CHARGE_RATE_PER_HOUR    35.0
 
 static double s_dischargeRatePerHour = DEFAULT_DISCHARGE_RATE_PER_HOUR;
 static double s_chargeRatePerHour    = DEFAULT_CHARGE_RATE_PER_HOUR;
 
-static int s_lastPercent = -1;
-static BOOL s_lastWasCharging = FALSE;
-static BOOL s_lastWasSleeping = FALSE;
-static time_t s_lastTimestamp = 0;
 static BOOL s_hasLearnedDischarge = FALSE;
-static BOOL s_hasLearnedCharge = FALSE;
+static BOOL s_hasLearnedCharge    = FALSE;
+
+// Active Monitored Time State
+static DWORD s_lastMonitoredTick  = 0;   // GetTickCount() timestamp of last processed poll
+static int   s_baselinePercent    = -1;  // Starting percentage for current accumulation window
+static BOOL  s_lastWasCharging    = FALSE;
+static DWORD s_accumDischargeSec  = 0;   // Accumulated active monitored seconds discharging
+static DWORD s_accumChargeSec     = 0;   // Accumulated active monitored seconds charging
 
 void BatteryStats_Init(void) {
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, STATS_REG_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        DWORD dwDischargeMilli = 0;
-        DWORD dwChargeMilli = 0;
+        DWORD dwVersion = 0;
         DWORD dwSize = sizeof(DWORD);
 
-        if (RegQueryValueExW(hKey, L"DischargeMilliRate", NULL, NULL, (LPBYTE)&dwDischargeMilli, &dwSize) == ERROR_SUCCESS) {
-            if (dwDischargeMilli >= 100 && dwDischargeMilli <= 50000) { // 0.1% to 50% per hr
-                s_dischargeRatePerHour = (double)dwDischargeMilli / 1000.0;
-                s_hasLearnedDischarge = TRUE;
-            }
-        }
+        // Check stats format version. If version < 2, ignore old rates
+        // (which were corrupted by the sleep reset bug) to start with fresh, accurate calibration.
+        if (RegQueryValueExW(hKey, L"StatsVersion", NULL, NULL, (LPBYTE)&dwVersion, &dwSize) == ERROR_SUCCESS && dwVersion >= CURRENT_STATS_VERSION) {
+            DWORD dwDischargeMilli = 0;
+            DWORD dwChargeMilli = 0;
+            DWORD dwAccumSec = 0;
+            DWORD dwBasePercent = 0;
 
-        dwSize = sizeof(DWORD);
-        if (RegQueryValueExW(hKey, L"ChargeMilliRate", NULL, NULL, (LPBYTE)&dwChargeMilli, &dwSize) == ERROR_SUCCESS) {
-            if (dwChargeMilli >= 5000 && dwChargeMilli <= 100000) { // 5% to 100% per hr
-                s_chargeRatePerHour = (double)dwChargeMilli / 1000.0;
-                s_hasLearnedCharge = TRUE;
+            dwSize = sizeof(DWORD);
+            if (RegQueryValueExW(hKey, L"DischargeMilliRate", NULL, NULL, (LPBYTE)&dwDischargeMilli, &dwSize) == ERROR_SUCCESS) {
+                if (dwDischargeMilli >= 10 && dwDischargeMilli <= 50000) { // 0.01% to 50% per hr
+                    s_dischargeRatePerHour = (double)dwDischargeMilli / 1000.0;
+                    s_hasLearnedDischarge = TRUE;
+                }
+            }
+
+            dwSize = sizeof(DWORD);
+            if (RegQueryValueExW(hKey, L"ChargeMilliRate", NULL, NULL, (LPBYTE)&dwChargeMilli, &dwSize) == ERROR_SUCCESS) {
+                if (dwChargeMilli >= 5000 && dwChargeMilli <= 100000) { // 5% to 100% per hr
+                    s_chargeRatePerHour = (double)dwChargeMilli / 1000.0;
+                    s_hasLearnedCharge = TRUE;
+                }
+            }
+
+            dwSize = sizeof(DWORD);
+            if (RegQueryValueExW(hKey, L"AccumDischargeSec", NULL, NULL, (LPBYTE)&dwAccumSec, &dwSize) == ERROR_SUCCESS) {
+                if (dwAccumSec <= 86400 * 30) { // Max 30 days of monitored accumulation safety cap
+                    s_accumDischargeSec = dwAccumSec;
+                }
+            }
+
+            dwSize = sizeof(DWORD);
+            if (RegQueryValueExW(hKey, L"BaselinePercent", NULL, NULL, (LPBYTE)&dwBasePercent, &dwSize) == ERROR_SUCCESS) {
+                if (dwBasePercent <= 100) {
+                    s_baselinePercent = (int)dwBasePercent;
+                }
             }
         }
 
@@ -50,116 +77,143 @@ void BatteryStats_Init(void) {
 void BatteryStats_Save(void) {
     HKEY hKey;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, STATS_REG_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+        DWORD dwVersion = CURRENT_STATS_VERSION;
         DWORD dwDischargeMilli = (DWORD)(s_dischargeRatePerHour * 1000.0 + 0.5);
         DWORD dwChargeMilli = (DWORD)(s_chargeRatePerHour * 1000.0 + 0.5);
+        DWORD dwAccumSec = s_accumDischargeSec;
+        DWORD dwBasePercent = (s_baselinePercent >= 0) ? (DWORD)s_baselinePercent : 0xFFFFFFFF;
 
+        RegSetValueExW(hKey, L"StatsVersion", 0, REG_DWORD, (const BYTE*)&dwVersion, sizeof(DWORD));
         RegSetValueExW(hKey, L"DischargeMilliRate", 0, REG_DWORD, (const BYTE*)&dwDischargeMilli, sizeof(DWORD));
         RegSetValueExW(hKey, L"ChargeMilliRate", 0, REG_DWORD, (const BYTE*)&dwChargeMilli, sizeof(DWORD));
+        RegSetValueExW(hKey, L"AccumDischargeSec", 0, REG_DWORD, (const BYTE*)&dwAccumSec, sizeof(DWORD));
+        RegSetValueExW(hKey, L"BaselinePercent", 0, REG_DWORD, (const BYTE*)&dwBasePercent, sizeof(DWORD));
         RegCloseKey(hKey);
     }
 }
 
 void BatteryStats_ResetSessionBaseline(void) {
-    s_lastTimestamp = time(NULL);
-    s_lastPercent = -1;
-    s_lastWasSleeping = FALSE;
+    // Re-anchor the poll tick so PC suspend/sleep duration is never counted
+    // while safely preserving accumulated monitored discharge seconds and baseline percent.
+    s_lastMonitoredTick = 0;
 }
 
 void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isSleeping, BOOL isDisconnected) {
+    (void)isSleeping;
+
     if (isDisconnected || batteryPercent < 0 || batteryPercent > 100) {
+        // Disconnected: suspend active tick tracking so offline time is not counted
+        s_lastMonitoredTick = 0;
         return;
     }
 
-    time_t now = time(NULL);
+    DWORD nowTick = GetTickCount();
 
-    if (s_lastPercent < 0 || s_lastTimestamp == 0) {
-        s_lastPercent = batteryPercent;
+    // Initial baseline capture on first valid reading
+    if (s_lastMonitoredTick == 0 || s_baselinePercent < 0) {
+        s_baselinePercent = batteryPercent;
+        s_accumDischargeSec = 0;
+        s_accumChargeSec = 0;
         s_lastWasCharging = isCharging;
-        s_lastWasSleeping = isSleeping;
-        s_lastTimestamp = now;
+        s_lastMonitoredTick = nowTick;
         return;
     }
 
-    // If state changed between charging and discharging, reset the baseline observation
+    // Measure delta time between active polling ticks
+    DWORD deltaMs = nowTick - s_lastMonitoredTick;
+    s_lastMonitoredTick = nowTick;
+    DWORD deltaSec = deltaMs / 1000;
+
+    // Active Monitored Time filter:
+    // Only accumulate seconds if polling has been continuous (<= 120s between polls).
+    // Gaps > 120s indicate PC sleep, screen off, or lock, and are strictly discarded.
+    BOOL isContinuousMonitored = (deltaSec > 0 && deltaSec <= 120);
+
+    // If state changed between charging and discharging, reset the window
     if (s_lastWasCharging != isCharging) {
-        s_lastPercent = batteryPercent;
+        s_baselinePercent = batteryPercent;
         s_lastWasCharging = isCharging;
-        s_lastWasSleeping = isSleeping;
-        s_lastTimestamp = now;
+        s_accumDischargeSec = 0;
+        s_accumChargeSec = 0;
         return;
     }
 
-    // If keyboard transitioned into or out of sleep, reset the baseline observation
-    // (Prevents hours of inactive keyboard sleep from being counted as active typing discharge)
-    if (s_lastWasSleeping != isSleeping) {
-        s_lastPercent = batteryPercent;
-        s_lastWasSleeping = isSleeping;
-        s_lastTimestamp = now;
-        return;
-    }
-
-    double deltaSec = (double)(now - s_lastTimestamp);
-
-    // Require at least 60 seconds of elapsed time between rate evaluations
-    if (deltaSec < 60.0) {
-        return;
-    }
-
-    if (!isCharging && !isSleeping) {
-        // Discharging observation
-        if (batteryPercent < s_lastPercent) {
-            int deltaPercent = s_lastPercent - batteryPercent;
-            double hours = deltaSec / 3600.0;
-            double instantRate = (double)deltaPercent / hours;
-
-            // Sanity check: valid keyboard discharge rate between 0.2% and 15% per hour
-            if (instantRate >= 0.2 && instantRate <= 15.0) {
-                if (!s_hasLearnedDischarge) {
-                    s_dischargeRatePerHour = instantRate;
-                    s_hasLearnedDischarge = TRUE;
-                } else {
-                    // Exponential moving average: 75% previous history, 25% new observation
-                    s_dischargeRatePerHour = 0.75 * s_dischargeRatePerHour + 0.25 * instantRate;
-                }
-                BatteryStats_Save();
-            }
-
-            s_lastPercent = batteryPercent;
-            s_lastTimestamp = now;
-        } else if (batteryPercent > s_lastPercent) {
-            // Percent increased while marked not charging (likely plugged in or battery rebound)
-            s_lastPercent = batteryPercent;
-            s_lastTimestamp = now;
+    if (!isCharging) {
+        // DISCHARGING
+        if (isContinuousMonitored) {
+            s_accumDischargeSec += deltaSec;
         }
-    } else if (isCharging) {
-        // Charging observation
-        if (batteryPercent > s_lastPercent) {
-            int deltaPercent = batteryPercent - s_lastPercent;
-            double hours = deltaSec / 3600.0;
-            double instantRate = (double)deltaPercent / hours;
 
-            // Sanity check: valid keyboard charge rate between 10% and 80% per hour
-            if (instantRate >= 10.0 && instantRate <= 80.0) {
-                if (!s_hasLearnedCharge) {
-                    s_chargeRatePerHour = instantRate;
-                    s_hasLearnedCharge = TRUE;
-                } else {
-                    s_chargeRatePerHour = 0.75 * s_chargeRatePerHour + 0.25 * instantRate;
+        if (batteryPercent < s_baselinePercent) {
+            int deltaPercent = s_baselinePercent - batteryPercent;
+            double hours = (double)s_accumDischargeSec / 3600.0;
+
+            // Robust evaluation trigger:
+            // 1. Require at least 2% drop OR
+            // 2. Require at least 1% drop with >= 1.0 hour of active monitored observation.
+            // This completely eliminates single-percentage quantization edge jitter.
+            BOOL shouldUpdate = (deltaPercent >= 2) || (deltaPercent >= 1 && hours >= 1.0);
+
+            if (shouldUpdate && hours > 0.05) {
+                double instantRate = (double)deltaPercent / hours;
+
+                // Sanity bounds: 0.01% to 20.0% per hour
+                // (0.01%/hr = ~10,000 hrs / >1 year; 20.0%/hr = 5 hours heavy RGB use)
+                if (instantRate >= 0.01 && instantRate <= 20.0) {
+                    if (!s_hasLearnedDischarge) {
+                        s_dischargeRatePerHour = instantRate;
+                        s_hasLearnedDischarge = TRUE;
+                    } else {
+                        // Smooth exponential moving average: 80% history, 20% new observation
+                        s_dischargeRatePerHour = 0.80 * s_dischargeRatePerHour + 0.20 * instantRate;
+                    }
+                    BatteryStats_Save();
                 }
-                BatteryStats_Save();
-            }
 
-            s_lastPercent = batteryPercent;
-            s_lastTimestamp = now;
-        } else if (batteryPercent < s_lastPercent) {
-            s_lastPercent = batteryPercent;
-            s_lastTimestamp = now;
+                s_baselinePercent = batteryPercent;
+                s_accumDischargeSec = 0;
+            }
+        } else if (batteryPercent > s_baselinePercent) {
+            // Voltage rebound or unflagged charge
+            s_baselinePercent = batteryPercent;
+        }
+    } else {
+        // CHARGING
+        if (isContinuousMonitored) {
+            s_accumChargeSec += deltaSec;
+        }
+
+        if (batteryPercent > s_baselinePercent) {
+            int deltaPercent = batteryPercent - s_baselinePercent;
+            double hours = (double)s_accumChargeSec / 3600.0;
+
+            BOOL shouldUpdate = (deltaPercent >= 2) || (deltaPercent >= 1 && hours >= 0.25);
+
+            if (shouldUpdate && hours > 0.05) {
+                double instantRate = (double)deltaPercent / hours;
+
+                // Sanity bounds: 5% to 100% per hour
+                if (instantRate >= 5.0 && instantRate <= 100.0) {
+                    if (!s_hasLearnedCharge) {
+                        s_chargeRatePerHour = instantRate;
+                        s_hasLearnedCharge = TRUE;
+                    } else {
+                        s_chargeRatePerHour = 0.75 * s_chargeRatePerHour + 0.25 * instantRate;
+                    }
+                    BatteryStats_Save();
+                }
+
+                s_baselinePercent = batteryPercent;
+                s_accumChargeSec = 0;
+            }
+        } else if (batteryPercent < s_baselinePercent) {
+            s_baselinePercent = batteryPercent;
         }
     }
 }
 
 BOOL BatteryStats_GetDischargeTimeRemaining(int currentPercent, int *outMinutes) {
-    if (!outMinutes || currentPercent <= 0 || s_dischargeRatePerHour <= 0.05) {
+    if (!outMinutes || currentPercent <= 0 || s_dischargeRatePerHour <= 0.005) {
         if (outMinutes) *outMinutes = 0;
         return FALSE;
     }
@@ -297,7 +351,7 @@ double BatteryStats_GetChargeRatePerHour(void) {
 
 BOOL BatteryStats_GetEstimatedEnduranceHours(double *outHours) {
     if (!outHours) return FALSE;
-    if (s_dischargeRatePerHour <= 0.05) {
+    if (s_dischargeRatePerHour <= 0.005) {
         *outHours = 0.0;
         return FALSE;
     }

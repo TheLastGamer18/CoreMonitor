@@ -441,7 +441,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             SelectObject(memDC, hFontSub);
             SetTextColor(memDC, colTextSec);
-            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.4.0", 38);
+            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.4.1", 38);
 
             // Live status & battery badge
             int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
@@ -516,7 +516,11 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             }
 
             WCHAR dRateStr[32], cRateStr[32];
-            _snwprintf(dRateStr, 32, L"~%.1f%% / hour", dRate);
+            if (dRate < 1.0) {
+                _snwprintf(dRateStr, 32, L"~%.2f%% / hour", dRate);
+            } else {
+                _snwprintf(dRateStr, 32, L"~%.1f%% / hour", dRate);
+            }
             _snwprintf(cRateStr, 32, L"~%.1f%% / hour", cRate);
 
             // Card 1: Battery & Runtime
