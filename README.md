@@ -10,12 +10,12 @@ No heavy runtimes, no background bloat. Compiles to a single standalone executab
 
 | In Taskbar (with Ring Only) | In Taskbar (with Battery Number) | In Taskbar (with Keyboard Icon) |
 | :---: | :---: | :---: |
-| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558822209286570095/image.png?ex=6accd5d0&is=6acb8450&hm=ac9982b68c292a2f5f869140b3a44ad13d8fe7bcbbd4604c045db305f50bf397&" height="180" style="vertical-align: middle;">| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558823037850361926/image.png?ex=6accd695&is=6acb8515&hm=5fe64e5f18864dda6e2931641bc17d52d905efa0e6b4670240b30defeb3458bb&" height="180" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558823087712247878/image.png?ex=6accd6a1&is=6acb8521&hm=338ea460643c3ead4f2cb65acaeda8b1ce13236cf97a2aefecebf833672c3ac0&" height="180" style="vertical-align: middle;"> |
+| <img height="180" alt="image" src="https://github.com/user-attachments/assets/1b0be342-5dc8-424e-9d38-387121788646" /> | <img height="180" alt="image" src="https://github.com/user-attachments/assets/f0e70039-785b-4bc5-a2cb-a86dcc09a74b" /> | <img height="180" alt="image" src="https://github.com/user-attachments/assets/cbfe381f-a2f5-4f51-9a33-95f2824fa35b" /> |
 
 
 | Right-Click Menu | Battery Details & Statistics Menu |
 | :---: | :---: |
-| <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558823423000707092/image.png?ex=6accd6f1&is=6acb8571&hm=636f096123acce5f4307537b3377aea28a2098f423cec8f779cac2e925d6400d&" height="450" style="vertical-align: middle;"> | <img src="https://cdn.discordapp.com/attachments/799204313498648599/1558820445816356864/image.png?ex=6accd42b&is=6acb82ab&hm=667a12f63de493c2f1a0af515a0ec5ab9aa082553f16cf596400b45f39edef1c&" height="450" style="vertical-align: middle;"> |
+| <img height="450" alt="image" src="https://github.com/user-attachments/assets/25c419fe-1005-4bc4-b542-42fd7a1a3168" /> | <img height="450" alt="image" src="https://github.com/user-attachments/assets/f463581e-d0f3-4186-a870-00946a6db243" /> |
 
 ---
 
