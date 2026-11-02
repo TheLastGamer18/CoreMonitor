@@ -1,7 +1,5 @@
 #include "icon_generator.h"
 #include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 #ifndef PI
 #define PI 3.14159265358979323846f

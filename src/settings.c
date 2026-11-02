@@ -95,8 +95,6 @@ void Settings_Save(void) {
         RegSetValueExW(hKey, L"HighBatteryAlert", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         val = (DWORD)g_Settings.highAlertThreshold;
         RegSetValueExW(hKey, L"HighAlertThreshold", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
-        RegDeleteValueW(hKey, L"ChargingOverride");
-        RegDeleteValueW(hKey, L"SleepTimeoutMinutes");
         val = g_Settings.startWithWindows ? 1 : 0;
         RegSetValueExW(hKey, L"StartWithWindows", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         RegCloseKey(hKey);

@@ -3,7 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 
 #include <windows.h>
-#include <ole2.h>
+#include <objbase.h>
 #include <shellapi.h>
 #include <dbt.h>
 #include <stdio.h>
@@ -92,7 +92,6 @@ typedef enum {
 
 typedef PreferredAppMode (WINAPI *pfnSetPreferredAppMode_t)(PreferredAppMode);
 typedef BOOL (WINAPI *pfnAllowDarkModeForWindow_t)(HWND, BOOL);
-typedef BOOL (WINAPI *pfnAllowDarkModeForApp_t)(BOOL);
 typedef void (WINAPI *pfnFlushMenuThemes_t)(void);
 typedef BOOL (WINAPI *pfnShouldAppsUseDarkMode_t)(void);
 typedef HRESULT (WINAPI *pfnDwmSetWindowAttribute_t)(HWND, DWORD, LPCVOID, DWORD);
@@ -118,11 +117,6 @@ static void InitDarkMode(void) {
 
         if (s_pfnSetPreferredAppMode) {
             s_pfnSetPreferredAppMode(APPMODE_ALLOWDARK);
-        } else {
-            pfnAllowDarkModeForApp_t pfnAllowDarkModeForApp = (pfnAllowDarkModeForApp_t)GetProcAddress(hUxTheme, MAKEINTRESOURCEA(135));
-            if (pfnAllowDarkModeForApp) {
-                pfnAllowDarkModeForApp(TRUE);
-            }
         }
 
         if (s_pfnFlushMenuThemes) {
@@ -441,7 +435,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             SelectObject(memDC, hFontSub);
             SetTextColor(memDC, colTextSec);
-            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.4.1", 38);
+            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.5.0", 38);
 
             // Live status & battery badge
             int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
@@ -720,8 +714,8 @@ static void ShowDetailsDialog(HWND hWnd) {
 
     HDC hdc = GetDC(NULL);
     int dpi = 96;
-    if (s_pfnGetDpiForWindow && s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
-        dpi = s_pfnGetDpiForWindow(s_hDetailsWnd);
+    if (s_pfnGetDpiForWindow && hWnd) {
+        dpi = s_pfnGetDpiForWindow(hWnd);
     }
     if (dpi <= 0) {
         dpi = GetDeviceCaps(hdc, LOGPIXELSY);
@@ -766,7 +760,7 @@ static void ShowDetailsDialog(HWND hWnd) {
 
 static void PollAndUpdate(void) {
     DWORD now = GetTickCount();
-    int sleepMin = BatteryMonitor_GetSleepTimerMinutes();
+    int sleepMin = DEFAULT_SLEEP_MINUTES;
     DWORD sleepMs = (DWORD)sleepMin * 60 * 1000;
 
     DWORD idleMs = (s_lastKeyboardInputTick != 0) ? (DWORD)(now - s_lastKeyboardInputTick) : (sleepMs + 1);
@@ -805,7 +799,7 @@ static void PollAndUpdate(void) {
         s_lastKeyboardInputTick = now;
     }
 
-    // Set status text and states for 2.4G
+    // Set states for 2.4G
     if (s_currentStatus.mode == MODE_2P4G) {
         if (!liveQuerySuccess && (idleMs >= sleepMs || s_lastKeyboardInputTick == 0)) {
             isSleeping = TRUE;
@@ -816,29 +810,13 @@ static void PollAndUpdate(void) {
         int effBatt = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
         s_currentStatus.batteryPercent = effBatt;
         s_currentStatus.lastKnownPercent = effBatt;
-
-        if (isSleeping) {
-            wcscpy(s_currentStatus.stateName, L"Asleep");
-            if (effBatt >= 0) {
-                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [Asleep - 2.4GHz]", effBatt);
-            } else {
-                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: Asleep - [2.4GHz]");
-            }
-        } else {
-            wcscpy(s_currentStatus.stateName, L"Active");
-            if (effBatt >= 0) {
-                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", effBatt);
-            } else {
-                _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: Connecting... - [2.4GHz Wireless]");
-            }
-        }
     }
 
     BOOL isDisconnected = (s_currentStatus.mode == MODE_DISCONNECTED);
     int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
 
     // Record battery observation in statistics engine
-    BatteryStats_Record(effPercent, s_currentStatus.isCharging, s_currentStatus.isSleeping, isDisconnected);
+    BatteryStats_Record(effPercent, s_currentStatus.isCharging, isDisconnected);
 
     WCHAR toastBuf[256];
 
@@ -1127,17 +1105,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                         // Multi-keyboard isolation: only track input originating from the URX Core75
                         if (IsURXKeyboardDevice(raw.header.hDevice)) {
                             s_lastKeyboardInputTick = GetTickCount();
-                            BatteryMonitor_ResetFailures();
                             if ((s_currentStatus.isSleeping || s_lastRadioQueryTick == 0) && s_currentStatus.mode == MODE_2P4G) {
                                 // Instantly wake up UI state to Active!
                                 s_currentStatus.isSleeping = FALSE;
-                                wcscpy(s_currentStatus.stateName, L"Active");
-                                int effBatt = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
-                                if (effBatt >= 0) {
-                                    _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: %d%% - [2.4GHz Wireless]", effBatt);
-                                } else {
-                                    _snwprintf(s_currentStatus.statusText, 128, L"URX Core75: [2.4GHz Wireless]");
-                                }
                                 UpdateTrayIcon();
                                 if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
                                     InvalidateRect(s_hDetailsWnd, NULL, TRUE);
@@ -1234,10 +1204,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 s_lastKeyboardInputTick = 0;
                 s_lastRadioQueryTick = 0; // Unqueried after resume: wake event or poll syncs true battery immediately (Issue 1)
                 s_currentStatus.isSleeping = TRUE;
-                wcscpy(s_currentStatus.stateName, L"Asleep");
                 BatteryStats_ResetSessionBaseline();
                 BatteryMonitor_ResetBaseline();
-                BatteryMonitor_ResetFailures();
                 BatteryMonitor_InvalidateCache();
                 if (!s_isSessionLocked && !s_isDisplayOff) {
                     SetTimer(hWnd, IDT_POLL_TIMER, 1500, NULL);
@@ -1260,7 +1228,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                             s_lastRadioQueryTick = 0; // Issue 1
                             // If PC is resuming from actual sleep, preserve the USB stabilization window
                             if (!s_isResumingFromSuspend) {
-                                BatteryMonitor_ResetFailures();
                                 BatteryMonitor_InvalidateCache();
                                 SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
                             }
@@ -1283,7 +1250,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 if (!s_isDisplayOff) {
                     s_lastKeyboardInputTick = 0;
                     s_lastRadioQueryTick = 0; // Issue 1
-                    BatteryMonitor_ResetFailures();
                     BatteryMonitor_InvalidateCache();
                     SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
                 }

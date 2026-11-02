@@ -1,6 +1,5 @@
 #include "battery_stats.h"
 #include <stdio.h>
-#include <time.h>
 
 #define STATS_REG_KEY L"Software\\CoreMonitor\\Stats"
 #define CURRENT_STATS_VERSION 2
@@ -98,9 +97,7 @@ void BatteryStats_ResetSessionBaseline(void) {
     s_lastMonitoredTick = 0;
 }
 
-void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isSleeping, BOOL isDisconnected) {
-    (void)isSleeping;
-
+void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isDisconnected) {
     if (isDisconnected || batteryPercent < 0 || batteryPercent > 100) {
         // Disconnected: suspend active tick tracking so offline time is not counted
         s_lastMonitoredTick = 0;

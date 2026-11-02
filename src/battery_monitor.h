@@ -20,11 +20,11 @@ typedef struct {
     int lastKnownPercent;     // Retained last known valid percentage even when asleep/offline
     BOOL isCharging;          // TRUE if plugged into USB and charging
     BOOL isSleeping;          // TRUE if dongle present but keyboard asleep/offline
-    int sleepTimerMinutes;    // Detected sleep timer in minutes (1, 3, 10, 30; default 3)
-    WCHAR statusText[128];
     WCHAR modeName[32];
-    WCHAR stateName[32];      // "Active", "Asleep", "Charging", "Fully Charged", "Offline"
 } URXStatus;
+
+// Default sleep timeout in minutes for URX Core75
+#define DEFAULT_SLEEP_MINUTES 3
 
 // Initialize hardware monitoring subsystems
 BOOL BatteryMonitor_Init(void);
@@ -36,12 +36,6 @@ void BatteryMonitor_InvalidateCache(void);
 // allowWirelessQuery: if FALSE, suppresses active 2.4GHz RF queries to allow keyboard to sleep
 // Returns TRUE if live battery reading was successfully queried, FALSE otherwise
 BOOL BatteryMonitor_Poll(URXStatus *outStatus, BOOL allowWirelessQuery);
-
-// Get the detected sleep timer in minutes (default 3 if unqueried/offline)
-int BatteryMonitor_GetSleepTimerMinutes(void);
-
-// Reset transient failure counters (e.g., when keystrokes confirm keyboard is awake)
-void BatteryMonitor_ResetFailures(void);
 
 // Returns TRUE if an ADC transient/outlier is currently being stabilized
 BOOL BatteryMonitor_IsFilteringTransient(void);

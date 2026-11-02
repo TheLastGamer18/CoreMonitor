@@ -14,7 +14,7 @@ void BatteryStats_Init(void);
 void BatteryStats_ResetSessionBaseline(void);
 
 // Record a new battery polling observation
-void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isSleeping, BOOL isDisconnected);
+void BatteryStats_Record(int batteryPercent, BOOL isCharging, BOOL isDisconnected);
 
 // Estimates minutes remaining on battery based on historical discharge rate
 // Returns TRUE if valid estimate available, FALSE otherwise
