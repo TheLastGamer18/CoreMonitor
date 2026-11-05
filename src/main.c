@@ -78,9 +78,20 @@ static DWORD s_lastKeyboardInputTick = 0;
 static DWORD s_lastRadioQueryTick = 0;
 static DWORD s_lastManualToastTick = 0;
 static BOOL s_isResumingFromSuspend = FALSE;
-static HANDLE s_cachedUrxDevice1 = NULL;
-static HANDLE s_cachedUrxDevice2 = NULL;
-static HANDLE s_cachedNonUrxKeyboardDevice = NULL;
+
+#define MAX_CACHED_URX_DEVICES 4
+#define MAX_CACHED_NON_URX_DEVICES 8
+static HANDLE s_cachedUrxDevices[MAX_CACHED_URX_DEVICES] = {0};
+static HANDLE s_cachedNonUrxDevices[MAX_CACHED_NON_URX_DEVICES] = {0};
+static int s_urxDeviceCount = 0;
+static int s_nonUrxDeviceCount = 0;
+
+static void ClearDeviceCache(void) {
+    memset(s_cachedUrxDevices, 0, sizeof(s_cachedUrxDevices));
+    memset(s_cachedNonUrxDevices, 0, sizeof(s_cachedNonUrxDevices));
+    s_urxDeviceCount = 0;
+    s_nonUrxDeviceCount = 0;
+}
 
 typedef enum {
     APPMODE_DEFAULT = 0,
@@ -334,6 +345,53 @@ static void DrawCardRow(HDC hdc, int left, int top, int w, int rowH,
     DrawTextW(hdc, val, -1, &rVal, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
+static HFONT s_hFontTitle = NULL;
+static HFONT s_hFontSub = NULL;
+static HFONT s_hFontSecHdr = NULL;
+static HFONT s_hFontRow = NULL;
+static HFONT s_hFontBadge = NULL;
+static HFONT s_hFontBtn = NULL;
+static int s_detailsDpi = 0;
+
+static void CleanupDetailsFonts(void) {
+    if (s_hFontTitle)  { DeleteObject(s_hFontTitle);  s_hFontTitle = NULL; }
+    if (s_hFontSub)    { DeleteObject(s_hFontSub);    s_hFontSub = NULL; }
+    if (s_hFontSecHdr) { DeleteObject(s_hFontSecHdr); s_hFontSecHdr = NULL; }
+    if (s_hFontRow)    { DeleteObject(s_hFontRow);    s_hFontRow = NULL; }
+    if (s_hFontBadge)  { DeleteObject(s_hFontBadge);  s_hFontBadge = NULL; }
+    if (s_hFontBtn)    { DeleteObject(s_hFontBtn);    s_hFontBtn = NULL; }
+    s_detailsDpi = 0;
+}
+
+static void EnsureDetailsFonts(int dpi) {
+    if (dpi <= 0) dpi = 96;
+    if (s_detailsDpi == dpi && s_hFontTitle) return;
+
+    CleanupDetailsFonts();
+    s_detailsDpi = dpi;
+
+    #define SC_FNT(val) MulDiv((val), dpi, 96)
+    s_hFontTitle  = CreateFontW(-SC_FNT(15), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    s_hFontSub    = CreateFontW(-SC_FNT(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    s_hFontSecHdr = CreateFontW(-SC_FNT(10), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    s_hFontRow    = CreateFontW(-SC_FNT(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    s_hFontBadge  = CreateFontW(-SC_FNT(12), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    s_hFontBtn    = CreateFontW(-SC_FNT(12), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    #undef SC_FNT
+}
+
 static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_CREATE: {
@@ -401,26 +459,8 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
                 dpi = GetDeviceCaps(hdc, LOGPIXELSY);
             }
             if (dpi <= 0) dpi = 96;
+            EnsureDetailsFonts(dpi);
             #define SC(val) MulDiv((val), dpi, 96)
-
-            HFONT hFontTitle = CreateFontW(-SC(15), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            HFONT hFontSub = CreateFontW(-SC(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            HFONT hFontSecHdr = CreateFontW(-SC(10), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            HFONT hFontRow = CreateFontW(-SC(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            HFONT hFontBadge = CreateFontW(-SC(12), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            HFONT hFontBtn = CreateFontW(-SC(12), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
             SetBkMode(memDC, TRANSPARENT);
 
@@ -429,13 +469,13 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             int curY = SC(14);
 
             // Title & Subtitle
-            SelectObject(memDC, hFontTitle);
+            SelectObject(memDC, s_hFontTitle);
             SetTextColor(memDC, colTextPri);
             TextOutW(memDC, pad, curY, L"URX Core75", 10);
 
-            SelectObject(memDC, hFontSub);
+            SelectObject(memDC, s_hFontSub);
             SetTextColor(memDC, colTextSec);
-            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.5.0", 38);
+            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.5.1", 38);
 
             // Live status & battery badge
             int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
@@ -468,7 +508,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
                 colBadgeText = isDark ? RGB(52, 211, 153) : RGB(4, 120, 87);
             }
 
-            SelectObject(memDC, hFontBadge);
+            SelectObject(memDC, s_hFontBadge);
             SIZE badgeSize;
             GetTextExtentPoint32W(memDC, badgeText, wcslen(badgeText), &badgeSize);
             int badgeW = badgeSize.cx + SC(16);
@@ -520,7 +560,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             // Card 1: Battery & Runtime
             int card1H = SC(92);
             DrawCardPanel(memDC, pad, curY, cardW, card1H, colCardBg, colBorder, SC(8));
-            SelectObject(memDC, hFontSecHdr);
+            SelectObject(memDC, s_hFontSecHdr);
             SetTextColor(memDC, colHeader);
             TextOutW(memDC, pad + SC(12), curY + SC(8), L"BATTERY & RUNTIME", 17);
 
@@ -533,22 +573,22 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             wcsncpy(modeDisplay, s_currentStatus.modeName, 63);
             modeDisplay[63] = L'\0';
 
-            DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Connection Mode", modeDisplay, colTextSec, colTextPri, hFontRow);
-            DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Estimated Remaining", estBuf, colTextSec, colTextPri, hFontRow);
-            DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, L"Full Endurance", enduranceStr, colTextSec, colTextPri, hFontRow);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Connection Mode", modeDisplay, colTextSec, colTextPri, s_hFontRow);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Estimated Remaining", estBuf, colTextSec, colTextPri, s_hFontRow);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, L"Full Endurance", enduranceStr, colTextSec, colTextPri, s_hFontRow);
 
             curY += card1H + SC(10);
 
             // Card 2: Consumption Rates
             int card2H = SC(92);
             DrawCardPanel(memDC, pad, curY, cardW, card2H, colCardBg, colBorder, SC(8));
-            SelectObject(memDC, hFontSecHdr);
+            SelectObject(memDC, s_hFontSecHdr);
             SetTextColor(memDC, colHeader);
             TextOutW(memDC, pad + SC(12), curY + SC(8), L"CONSUMPTION RATES", 17);
 
             innerY = curY + SC(28);
-            DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Discharge Rate", dRateStr, colTextSec, colTextPri, hFontRow);
-            DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Charge Rate", cRateStr, colTextSec, colTextPri, hFontRow);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Discharge Rate", dRateStr, colTextSec, colTextPri, s_hFontRow);
+            DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Charge Rate", cRateStr, colTextSec, colTextPri, s_hFontRow);
 
             BOOL isFiltering = BatteryMonitor_IsFilteringTransient();
             BOOL isCalibrated = BatteryStats_IsCalibrated();
@@ -558,14 +598,14 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
                                             : (isCalibrated ? colAccent : colMuted);
 
             DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, L"Telemetry Status",
-                        telemStatus, colTextSec, colTelem, hFontRow);
+                        telemStatus, colTextSec, colTelem, s_hFontRow);
 
             curY += card2H + SC(10);
 
             // Card 3: Alert Configurations
             int card3H = SC(112);
             DrawCardPanel(memDC, pad, curY, cardW, card3H, colCardBg, colBorder, SC(8));
-            SelectObject(memDC, hFontSecHdr);
+            SelectObject(memDC, s_hFontSecHdr);
             SetTextColor(memDC, colHeader);
             TextOutW(memDC, pad + SC(12), curY + SC(8), L"ALERT CONFIGURATIONS", 20);
 
@@ -574,21 +614,21 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             _snwprintf(alertLabel, 64, L"Low Battery Alert (<=%d%%)", g_Settings.lowAlertThreshold);
             DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, alertLabel,
                         g_Settings.lowBatteryAlert ? L"Enabled" : L"Disabled",
-                        colTextSec, g_Settings.lowBatteryAlert ? colAccent : colMuted, hFontRow);
+                        colTextSec, g_Settings.lowBatteryAlert ? colAccent : colMuted, s_hFontRow);
 
             _snwprintf(alertLabel, 64, L"Longevity Alert (%d%%)", g_Settings.longevityAlertThreshold);
             DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, alertLabel,
                         g_Settings.longevityAlert ? L"Enabled" : L"Disabled",
-                        colTextSec, g_Settings.longevityAlert ? colAccent : colMuted, hFontRow);
+                        colTextSec, g_Settings.longevityAlert ? colAccent : colMuted, s_hFontRow);
 
             _snwprintf(alertLabel, 64, L"Full Battery Alert (%d%%)", g_Settings.highAlertThreshold);
             DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, alertLabel,
                         g_Settings.highBatteryAlert ? L"Enabled" : L"Disabled",
-                        colTextSec, g_Settings.highBatteryAlert ? colAccent : colMuted, hFontRow);
+                        colTextSec, g_Settings.highBatteryAlert ? colAccent : colMuted, s_hFontRow);
 
             DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Start with Windows",
                         g_Settings.startWithWindows ? L"Enabled" : L"Disabled",
-                        colTextSec, g_Settings.startWithWindows ? colAccent : colMuted, hFontRow);
+                        colTextSec, g_Settings.startWithWindows ? colAccent : colMuted, s_hFontRow);
 
             curY += card3H + SC(12);
 
@@ -604,7 +644,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             s_closeButtonRect.bottom = btnY + btnH;
 
             DrawCardPanel(memDC, btnX, btnY, btnW, btnH, colBtnBg, colBtnBdr, SC(6));
-            SelectObject(memDC, hFontBtn);
+            SelectObject(memDC, s_hFontBtn);
             SetTextColor(memDC, colBtnText);
             RECT textRect = s_closeButtonRect;
             OffsetRect(&textRect, 0, -SC(1));
@@ -618,13 +658,6 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             SelectObject(memDC, oldBmp);
             DeleteObject(memBmp);
             DeleteDC(memDC);
-
-            DeleteObject(hFontTitle);
-            DeleteObject(hFontSub);
-            DeleteObject(hFontSecHdr);
-            DeleteObject(hFontRow);
-            DeleteObject(hFontBadge);
-            DeleteObject(hFontBtn);
 
             EndPaint(hWnd, &ps);
             return 0;
@@ -680,6 +713,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         case WM_DESTROY: {
             s_hDetailsWnd = NULL;
             s_closeHover = FALSE;
+            CleanupDetailsFonts();
             return 0;
         }
 
@@ -766,9 +800,10 @@ static void PollAndUpdate(void) {
     DWORD idleMs = (s_lastKeyboardInputTick != 0) ? (DWORD)(now - s_lastKeyboardInputTick) : (sleepMs + 1);
     BOOL isSleeping = FALSE;
     BOOL allowWirelessQuery = FALSE;
+    BOOL wasWakeOrRefresh = (s_lastRadioQueryTick == 0);
 
-    if (s_lastRadioQueryTick == 0) {
-        // Initial one-shot probe on startup or explicit manual refresh
+    if (wasWakeOrRefresh) {
+        // Initial one-shot probe on startup, wake verification, or explicit manual refresh
         allowWirelessQuery = TRUE;
     } else if (s_currentStatus.mode == MODE_2P4G) {
         if (idleMs >= sleepMs) {
@@ -801,9 +836,14 @@ static void PollAndUpdate(void) {
 
     // Set states for 2.4G
     if (s_currentStatus.mode == MODE_2P4G) {
-        if (!liveQuerySuccess && (idleMs >= sleepMs || s_lastKeyboardInputTick == 0)) {
+        if (liveQuerySuccess) {
+            isSleeping = FALSE;
+        } else if (wasWakeOrRefresh || idleMs >= sleepMs || s_lastKeyboardInputTick == 0) {
+            // Over-the-air probe failed (keyboard asleep, switched off, or out of range) or idle timeout reached
             isSleeping = TRUE;
-        } else if (liveQuerySuccess) {
+            s_lastKeyboardInputTick = 0; // Clear unverified input tick
+        } else {
+            // During active typing, a dropped periodic background poll shouldn't mark asleep
             isSleeping = FALSE;
         }
         s_currentStatus.isSleeping = isSleeping;
@@ -872,7 +912,7 @@ static void PollAndUpdate(void) {
     if (s_currentStatus.isCharging) {
         if (!s_isAnimating) {
             s_isAnimating = TRUE;
-            SetTimer(s_hWnd, IDT_ANIM_TIMER, 40, NULL); // ~25 FPS
+            SetTimer(s_hWnd, IDT_ANIM_TIMER, 65, NULL); // ~15.4 FPS
         }
     } else {
         if (s_isAnimating) {
@@ -1025,38 +1065,47 @@ static void ShowContextMenu(HWND hWnd) {
 #endif
 
 // Determines if raw input event originated from URX Core75 keyboard
-// Uses dual-handle caching (primary NKRO + media/knob endpoints) for zero-overhead (<1ns) subsequent lookups
+// Uses multi-handle caching for zero-overhead (<1ns) subsequent lookups
 static BOOL IsURXKeyboardDevice(HANDLE hDevice) {
-    if (!hDevice) return TRUE; // Safe fallback for synthesized/injected keystrokes
-    if (hDevice == s_cachedUrxDevice1 || hDevice == s_cachedUrxDevice2) {
-        return TRUE;
+    if (!hDevice) return FALSE; // Injected / synthetic keystrokes (OSK, Touch, SendInput, RDP)
+
+    for (int i = 0; i < s_urxDeviceCount; i++) {
+        if (s_cachedUrxDevices[i] == hDevice) return TRUE;
     }
-    if (s_cachedNonUrxKeyboardDevice && hDevice == s_cachedNonUrxKeyboardDevice) {
-        return FALSE;
+    for (int i = 0; i < s_nonUrxDeviceCount; i++) {
+        if (s_cachedNonUrxDevices[i] == hDevice) return FALSE;
     }
 
     char name[512] = {0};
     UINT size = sizeof(name);
     UINT ret = GetRawInputDeviceInfoA(hDevice, RIDI_DEVICENAME, name, &size);
     if (ret != (UINT)-1 && ret > 0) {
-        if (strstr(name, "36b0") || strstr(name, "36B0")) {
-            if (!s_cachedUrxDevice1) {
-                s_cachedUrxDevice1 = hDevice;
-            } else if (!s_cachedUrxDevice2 && hDevice != s_cachedUrxDevice1) {
-                s_cachedUrxDevice2 = hDevice;
+        BOOL isVidMatch = (strstr(name, "36b0") != NULL || strstr(name, "36B0") != NULL);
+        BOOL isPidMatch = (strstr(name, "3002") != NULL || strstr(name, "3130") != NULL);
+
+        if (isVidMatch && isPidMatch) {
+            if (s_urxDeviceCount < MAX_CACHED_URX_DEVICES) {
+                s_cachedUrxDevices[s_urxDeviceCount++] = hDevice;
+            } else {
+                s_cachedUrxDevices[0] = hDevice;
             }
             return TRUE;
         } else {
-            s_cachedNonUrxKeyboardDevice = hDevice;
+            if (s_nonUrxDeviceCount < MAX_CACHED_NON_URX_DEVICES) {
+                s_cachedNonUrxDevices[s_nonUrxDeviceCount++] = hDevice;
+            } else {
+                s_cachedNonUrxDevices[0] = hDevice;
+            }
             return FALSE;
         }
     }
-    return TRUE; // Safe fallback if query failed
+    return FALSE; // Safe fallback: fail closed if query failed or device unverified
 }
 
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == s_uTaskbarRestartMsg && s_uTaskbarRestartMsg != 0) {
-        // Explorer restarted: re-register icon
+        // Explorer restarted: re-register icon with pre-existing valid icon
+        s_nid.hIcon = s_hCurrentIcon;
         Shell_NotifyIconW(NIM_ADD, &s_nid);
         UpdateTrayIcon();
         return 0;
@@ -1128,8 +1177,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 s_isResumingFromSuspend = FALSE;
                 PollAndUpdate();
             } else if (wParam == IDT_ANIM_TIMER) {
-                // Smooth breathing phase progression (2.5 second breath period)
-                s_breathPhase += 0.08f;
+                // Smooth breathing phase progression (2.5 second breath period at ~15 FPS)
+                s_breathPhase += 0.13f;
                 if (s_breathPhase > 2.0f * PI) {
                     s_breathPhase -= 2.0f * PI;
                 }
@@ -1137,8 +1186,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             } else if (wParam == IDT_CLICK_TIMER) {
                 KillTimer(hWnd, IDT_CLICK_TIMER);
                 // User performed a genuine single left-click: trigger quick refresh & status balloon
-                s_lastKeyboardInputTick = GetTickCount();
-                s_lastRadioQueryTick = 0;
                 BatteryMonitor_ForceDirectNextPoll();
                 PollAndUpdate();
 
@@ -1155,9 +1202,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_DEVICECHANGE: {
             // Hardware connect/disconnect event occurred!
             if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
-                s_cachedUrxDevice1 = NULL;
-                s_cachedUrxDevice2 = NULL;
-                s_cachedNonUrxKeyboardDevice = NULL;
+                ClearDeviceCache();
                 s_lastRadioQueryTick = 0; // Fresh hardware connection: query immediately (Issue 2)
                 BatteryMonitor_InvalidateCache();
                 // Brief 150ms pause to let Windows PnP finish enumeration, then poll
@@ -1187,9 +1232,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (wParam == PBT_APMSUSPEND) {
                 // PC entering sleep: pause polling and invalidate cached device paths
                 s_isResumingFromSuspend = TRUE;
-                s_cachedUrxDevice1 = NULL;
-                s_cachedUrxDevice2 = NULL;
-                s_cachedNonUrxKeyboardDevice = NULL;
+                ClearDeviceCache();
                 KillTimer(hWnd, IDT_POLL_TIMER);
                 BatteryStats_ResetSessionBaseline();
                 BatteryMonitor_ResetBaseline();
@@ -1198,9 +1241,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 // PC resumed from sleep:
                 // Passive USB presence check will immediately show clean last known battery in Asleep state
                 s_isResumingFromSuspend = TRUE;
-                s_cachedUrxDevice1 = NULL;
-                s_cachedUrxDevice2 = NULL;
-                s_cachedNonUrxKeyboardDevice = NULL;
+                ClearDeviceCache();
                 s_lastKeyboardInputTick = 0;
                 s_lastRadioQueryTick = 0; // Unqueried after resume: wake event or poll syncs true battery immediately (Issue 1)
                 s_currentStatus.isSleeping = TRUE;
@@ -1279,11 +1320,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             int wmId = LOWORD(wParam);
             switch (wmId) {
                 case IDM_REFRESH:
-                    s_lastKeyboardInputTick = GetTickCount();
                     s_lastRadioQueryTick = 0;
-                    s_cachedUrxDevice1 = NULL;
-                    s_cachedUrxDevice2 = NULL;
-                    s_cachedNonUrxKeyboardDevice = NULL;
+                    ClearDeviceCache();
                     BatteryMonitor_InvalidateCache();
                     BatteryMonitor_ForceDirectNextPoll();
                     PollAndUpdate();
@@ -1404,10 +1442,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     (void)lpCmdLine;
     (void)nCmdShow;
 
-    // 1. Ensure thread is bound to user's interactive "Default" desktop
+    // 1. Ensure thread is bound to user's interactive "Default" desktop (cleanly closing handle)
     HDESK hDesk = OpenDesktopA("Default", 0, FALSE, GENERIC_ALL);
     if (hDesk) {
         SetThreadDesktop(hDesk);
+        CloseDesktop(hDesk);
     }
 
     // Initialize System-Adaptive Dark Mode for Win32 menus

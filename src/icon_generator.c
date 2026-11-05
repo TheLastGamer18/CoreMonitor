@@ -173,9 +173,6 @@ HICON IconGen_CreateBatteryIcon(
     } else if (batteryPercent > 85) {
         // Crisp high-battery mint emerald
         arcR = 52; arcG = 211; arcB = 153;
-    } else {
-        // Healthy green
-        arcR = 46; arcG = 213; arcB = 115;
     }
 
     // Breathing pulse calculation when charging

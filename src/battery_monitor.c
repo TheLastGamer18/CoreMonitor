@@ -1,7 +1,6 @@
 #define _WIN32_WINNT 0x0601
 #include "battery_monitor.h"
 #include <setupapi.h>
-#include <stdio.h>
 
 #define URX_VID 0x36B0
 #define URX_PID_WIRED 0x3130
@@ -120,9 +119,6 @@ static void LoadLastKnownBattery(void) {
             if (val <= 100 && val > 0) s_lastKnownBattery = (int)val;
         }
         RegCloseKey(hKey);
-    }
-    if (s_lastKnownBattery < 0) {
-        s_lastKnownBattery = -1; // Uninitialized until first live query
     }
 }
 
@@ -292,7 +288,7 @@ static int QueryViaBattery(const char *devicePath, BOOL *outIsCharging) {
     if (wr) {
         writeOk = TRUE;
     } else if (GetLastError() == ERROR_IO_PENDING) {
-        if (WaitForSingleObject(ov.hEvent, 300) == WAIT_OBJECT_0) {
+        if (WaitForSingleObject(ov.hEvent, 200) == WAIT_OBJECT_0) {
             writeOk = GetOverlappedResult(hDev, &ov, &written, FALSE);
         } else {
             SafeCancelIo(hDev, &ov);
@@ -308,8 +304,8 @@ static int QueryViaBattery(const char *devicePath, BOOL *outIsCharging) {
             GetOverlappedResult(hDev, &ov, &bytes, FALSE);
         } else if (GetLastError() == ERROR_IO_PENDING) {
             // 2.4GHz RF turnaround after idle state takes up to ~140ms.
-            // 350ms gives plenty of headroom while completing safely without hanging.
-            if (WaitForSingleObject(ov.hEvent, 350) == WAIT_OBJECT_0) {
+            // 250ms gives plenty of headroom while completing safely without GUI lag.
+            if (WaitForSingleObject(ov.hEvent, 250) == WAIT_OBJECT_0) {
                 GetOverlappedResult(hDev, &ov, &bytes, FALSE);
             } else {
                 SafeCancelIo(hDev, &ov);
