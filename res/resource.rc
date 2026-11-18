@@ -3,10 +3,27 @@
 // Embed Application Manifest
 1 RT_MANIFEST "app.manifest"
 
+#if defined(BUILD_TARGET_CORE75) && !defined(BUILD_TARGET_COREM1)
+#define RES_FILEDESC "Core Monitor - Core75 Keyboard"
+#define RES_INTNAME  "CoreMonitor-Core75"
+#define RES_ORIGNAME "CoreMonitor-Core75.exe"
+#define RES_PRODNAME "Core Monitor - Core75"
+#elif defined(BUILD_TARGET_COREM1) && !defined(BUILD_TARGET_CORE75)
+#define RES_FILEDESC "Core Monitor - CoreM1 Mouse"
+#define RES_INTNAME  "CoreMonitor-CoreM1"
+#define RES_ORIGNAME "CoreMonitor-CoreM1.exe"
+#define RES_PRODNAME "Core Monitor - CoreM1"
+#else
+#define RES_FILEDESC "Core Monitor - Core75 Keyboard & CoreM1 Mouse"
+#define RES_INTNAME  "CoreMonitor"
+#define RES_ORIGNAME "CoreMonitor.exe"
+#define RES_PRODNAME "Core Monitor"
+#endif
+
 // Version Information
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,5,1,0
-PRODUCTVERSION  1,5,1,0
+FILEVERSION     2,0,0,0
+PRODUCTVERSION  2,0,0,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS_NT_WINDOWS32
@@ -18,12 +35,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName",      "CoreMonitor"
-            VALUE "FileDescription",  "Core Monitor"
-            VALUE "FileVersion",      "1.5.1"
-            VALUE "InternalName",     "CoreMonitor"
-            VALUE "OriginalFilename", "CoreMonitor.exe"
-            VALUE "ProductName",      "Core Monitor"
-            VALUE "ProductVersion",   "1.5.1"
+            VALUE "FileDescription",  RES_FILEDESC
+            VALUE "FileVersion",      "2.0.0"
+            VALUE "InternalName",     RES_INTNAME
+            VALUE "OriginalFilename", RES_ORIGNAME
+            VALUE "ProductName",      RES_PRODNAME
+            VALUE "ProductVersion",   "2.0.0"
         END
     END
     BLOCK "VarFileInfo"

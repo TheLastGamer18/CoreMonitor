@@ -7,10 +7,20 @@
 #include <shellapi.h>
 #include <dbt.h>
 #include <stdio.h>
-#include "battery_monitor.h"
+
+#include "common.h"
+#include "hid_common.h"
 #include "battery_stats.h"
 #include "icon_generator.h"
 #include "settings.h"
+
+#if defined(BUILD_TARGET_CORE75)
+#include "device_core75.h"
+#endif
+
+#if defined(BUILD_TARGET_COREM1)
+#include "device_corem1.h"
+#endif
 
 #ifndef PI
 #define PI 3.14159265358979323846f
@@ -21,34 +31,34 @@
 #endif
 
 #define WM_TRAY_CALLBACK (WM_APP + 100)
-#define IDT_POLL_TIMER   1001
-#define IDT_ANIM_TIMER   1002
-#define IDT_CLICK_TIMER  1003
+#define IDT_POLL_TIMER_CORE75 1001
+#define IDT_POLL_TIMER_COREM1 1002
+#define IDT_CLICK_TIMER_CORE75 1003
+#define IDT_CLICK_TIMER_COREM1 1004
+#define IDT_ANIM_TIMER        1005
+
 #define TOAST_MANUAL_COOLDOWN_MS 4000
 
+// Command IDs
 #define IDM_STATUS_TITLE  2001
 #define IDM_STATUS_INFO   2002
 #define IDM_STATUS_EST    2003
 #define IDM_REFRESH       2004
 #define IDM_DETAILS       2005
 
-// Icon styles (Submenu: Configure Icon)
 #define IDM_STYLE_RING_ONLY 2010
 #define IDM_STYLE_PERCENT   2011
-#define IDM_STYLE_KEYBOARD  2012
+#define IDM_STYLE_GLYPH     2012
 
-// Low Battery Alert Submenu
 #define IDM_LOW_ENABLE      2020
 #define IDM_LOW_10          2021
 #define IDM_LOW_15          2022
 #define IDM_LOW_20          2023
 
-// Longevity Alert Submenu
 #define IDM_LONG_ENABLE     2030
 #define IDM_LONG_80         2031
 #define IDM_LONG_85         2032
 
-// Full Battery Alert Submenu
 #define IDM_FULL_ENABLE     2040
 #define IDM_FULL_95         2041
 #define IDM_FULL_100        2042
@@ -58,40 +68,47 @@
 
 static const WCHAR *CLASS_NAME = L"CoreMonitor_Class";
 static const WCHAR *DETAILS_CLASS_NAME = L"CoreMonitor_DetailsClass";
+
+#if defined(BUILD_TARGET_CORE75) && !defined(BUILD_TARGET_COREM1)
+static const WCHAR *MUTEX_NAME = L"Global\\CoreMonitor_Core75_Mutex";
+#elif defined(BUILD_TARGET_COREM1) && !defined(BUILD_TARGET_CORE75)
+static const WCHAR *MUTEX_NAME = L"Global\\CoreMonitor_CoreM1_Mutex";
+#else
 static const WCHAR *MUTEX_NAME = L"Global\\CoreMonitor_Mutex";
+#endif
 
 static HWND s_hWnd = NULL;
 static HWND s_hDetailsWnd = NULL;
 static BOOL s_detailsClassRegistered = FALSE;
 static RECT s_closeButtonRect = {0};
 static BOOL s_closeHover = FALSE;
+static DeviceModel s_detailsTargetModel = MODEL_CORE75;
 
-static NOTIFYICONDATAW s_nid = {0};
-static HICON s_hCurrentIcon = NULL;
-static URXStatus s_currentStatus = {0};
 static UINT s_uTaskbarRestartMsg = 0;
-
 static float s_breathPhase = 0.0f;
 static BOOL s_isAnimating = FALSE;
 static HDEVNOTIFY s_hDevNotify = NULL;
-static DWORD s_lastKeyboardInputTick = 0;
-static DWORD s_lastRadioQueryTick = 0;
-static DWORD s_lastManualToastTick = 0;
 static BOOL s_isResumingFromSuspend = FALSE;
 
-#define MAX_CACHED_URX_DEVICES 4
-#define MAX_CACHED_NON_URX_DEVICES 8
-static HANDLE s_cachedUrxDevices[MAX_CACHED_URX_DEVICES] = {0};
-static HANDLE s_cachedNonUrxDevices[MAX_CACHED_NON_URX_DEVICES] = {0};
-static int s_urxDeviceCount = 0;
-static int s_nonUrxDeviceCount = 0;
+#if defined(BUILD_TARGET_CORE75)
+static NOTIFYICONDATAW s_nidCore75 = {0};
+static HICON s_hCurrentIconCore75 = NULL;
+static DeviceStatus s_statusCore75 = {0};
+static BatteryStatsContext s_statsCore75 = {0};
+static DWORD s_lastCore75InputTick = 0;
+static DWORD s_lastCore75RadioQueryTick = 0;
+static DWORD s_lastCore75ManualToastTick = 0;
+#endif
 
-static void ClearDeviceCache(void) {
-    memset(s_cachedUrxDevices, 0, sizeof(s_cachedUrxDevices));
-    memset(s_cachedNonUrxDevices, 0, sizeof(s_cachedNonUrxDevices));
-    s_urxDeviceCount = 0;
-    s_nonUrxDeviceCount = 0;
-}
+#if defined(BUILD_TARGET_COREM1)
+static NOTIFYICONDATAW s_nidCoreM1 = {0};
+static HICON s_hCurrentIconCoreM1 = NULL;
+static DeviceStatus s_statusCoreM1 = {0};
+static BatteryStatsContext s_statsCoreM1 = {0};
+static DWORD s_lastCoreM1InputTick = 0;
+static DWORD s_lastCoreM1RadioQueryTick = 0;
+static DWORD s_lastCoreM1ManualToastTick = 0;
+#endif
 
 typedef enum {
     APPMODE_DEFAULT = 0,
@@ -106,7 +123,6 @@ typedef BOOL (WINAPI *pfnAllowDarkModeForWindow_t)(HWND, BOOL);
 typedef void (WINAPI *pfnFlushMenuThemes_t)(void);
 typedef BOOL (WINAPI *pfnShouldAppsUseDarkMode_t)(void);
 typedef HRESULT (WINAPI *pfnDwmSetWindowAttribute_t)(HWND, DWORD, LPCVOID, DWORD);
-
 typedef UINT (WINAPI *pfnGetDpiForWindow_t)(HWND);
 typedef HRESULT (WINAPI *pfnSetCurrentProcessExplicitAppUserModelID_t)(PCWSTR);
 
@@ -126,13 +142,8 @@ static void InitDarkMode(void) {
         s_pfnAllowDarkModeForWindow = (pfnAllowDarkModeForWindow_t)GetProcAddress(hUxTheme, MAKEINTRESOURCEA(133));
         s_pfnShouldAppsUseDarkMode = (pfnShouldAppsUseDarkMode_t)GetProcAddress(hUxTheme, MAKEINTRESOURCEA(132));
 
-        if (s_pfnSetPreferredAppMode) {
-            s_pfnSetPreferredAppMode(APPMODE_ALLOWDARK);
-        }
-
-        if (s_pfnFlushMenuThemes) {
-            s_pfnFlushMenuThemes();
-        }
+        if (s_pfnSetPreferredAppMode) s_pfnSetPreferredAppMode(APPMODE_ALLOWDARK);
+        if (s_pfnFlushMenuThemes) s_pfnFlushMenuThemes();
     }
 
     HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
@@ -152,15 +163,10 @@ static void InitDarkMode(void) {
 }
 
 static BOOL IsAppInDarkMode(void) {
-    if (s_pfnShouldAppsUseDarkMode) {
-        return s_pfnShouldAppsUseDarkMode();
-    }
+    if (s_pfnShouldAppsUseDarkMode) return s_pfnShouldAppsUseDarkMode();
     HKEY hKey;
-    DWORD val = 0;
-    DWORD size = sizeof(val);
-    if (RegOpenKeyExW(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-            0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+    DWORD val = 0, size = sizeof(val);
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         if (RegQueryValueExW(hKey, L"AppsUseLightTheme", NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
             RegCloseKey(hKey);
             return (val == 0);
@@ -171,9 +177,7 @@ static BOOL IsAppInDarkMode(void) {
 }
 
 static void ApplyWindowTheme(HWND hWnd, BOOL isDark) {
-    if (s_pfnAllowDarkModeForWindow) {
-        s_pfnAllowDarkModeForWindow(hWnd, isDark);
-    }
+    if (s_pfnAllowDarkModeForWindow) s_pfnAllowDarkModeForWindow(hWnd, isDark);
     if (s_pfnDwmSetWindowAttribute) {
         BOOL dwmDark = isDark ? TRUE : FALSE;
         s_pfnDwmSetWindowAttribute(hWnd, 20, &dwmDark, sizeof(dwmDark));
@@ -193,7 +197,6 @@ static void ApplyWindowTheme(HWND hWnd, BOOL isDark) {
 #ifndef NOTIFY_FOR_THIS_SESSION
 #define NOTIFY_FOR_THIS_SESSION 0
 #endif
-
 #ifndef PBT_POWERSETTINGCHANGE
 #define PBT_POWERSETTINGCHANGE 0x8013
 #endif
@@ -228,7 +231,6 @@ static void InitPowerAndSessionHooks(void) {
         s_pfnRegisterPowerSettingNotification = (pfnRegisterPowerSettingNotification_t)GetProcAddress(hUser, "RegisterPowerSettingNotification");
         s_pfnUnregisterPowerSettingNotification = (pfnUnregisterPowerSettingNotification_t)GetProcAddress(hUser, "UnregisterPowerSettingNotification");
     }
-
     HMODULE hWts = LoadLibraryW(L"wtsapi32.dll");
     if (hWts) {
         s_pfnWTSRegisterSessionNotification = (pfnWTSRegisterSessionNotification_t)GetProcAddress(hWts, "WTSRegisterSessionNotification");
@@ -236,95 +238,217 @@ static void InitPowerAndSessionHooks(void) {
     }
 }
 
-static void FormatRichTooltip(WCHAR *outTip, DWORD maxLen) {
-    if (!outTip || maxLen == 0) return;
+static void FormatDeviceTooltip(DeviceModel model, const DeviceStatus *st, const BatteryStatsContext *stats, WCHAR *outTip, DWORD maxLen) {
+    if (!outTip || maxLen == 0 || !st || !stats) return;
     WCHAR estBuf[64];
-    int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+    int effPercent = (st->batteryPercent >= 0) ? st->batteryPercent : st->lastKnownPercent;
+    const WCHAR *modelName = (model == MODEL_COREM1) ? L"URX Core M1" : L"URX Core75";
 
     BatteryStats_FormatRemainingText(
+        stats,
         effPercent,
-        s_currentStatus.isCharging,
-        s_currentStatus.isSleeping,
-        (s_currentStatus.mode == MODE_DISCONNECTED),
+        st->isCharging,
+        st->isSleeping,
+        (st->mode == MODE_DISCONNECTED),
         estBuf, 64
     );
 
-    if (s_currentStatus.mode == MODE_DISCONNECTED) {
-        _snwprintf(outTip, maxLen, L"URX Core75: Disconnected");
+    WCHAR modeExtra[64] = {0};
+    if (st->mode != MODE_DISCONNECTED && model == MODEL_COREM1) {
+        if (st->dpiValue > 0 && st->pollingRateHz > 0) {
+            _snwprintf(modeExtra, 64, L" \x2022 %d DPI \x2022 %dHz", st->dpiValue, st->pollingRateHz);
+        } else if (st->dpiValue > 0) {
+            _snwprintf(modeExtra, 64, L" \x2022 %d DPI", st->dpiValue);
+        } else if (st->pollingRateHz > 0) {
+            _snwprintf(modeExtra, 64, L" \x2022 %dHz", st->pollingRateHz);
+        }
+    }
+
+    if (st->mode == MODE_DISCONNECTED) {
+        _snwprintf(outTip, maxLen, L"%s: Disconnected", modelName);
+    } else if (st->isSleeping) {
+        if (effPercent < 0) {
+            _snwprintf(outTip, maxLen, L"%s: Asleep (Wake device) - [2.4GHz%s]\nOffline", modelName, modeExtra);
+        } else {
+            _snwprintf(outTip, maxLen, L"%s: %d%% - [Asleep - 2.4GHz%s]\n%s", modelName, effPercent, modeExtra, estBuf);
+        }
     } else if (effPercent < 0) {
-        _snwprintf(outTip, maxLen, L"URX Core75: Connecting... - [%s]\n%s", s_currentStatus.modeName, estBuf);
-    } else if (s_currentStatus.isSleeping) {
-        _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [Asleep - 2.4GHz]\n%s", effPercent, estBuf);
-    } else if (s_currentStatus.isCharging) {
-        _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [%s - Charging]\n%s", effPercent, s_currentStatus.modeName, estBuf);
+        _snwprintf(outTip, maxLen, L"%s: Connecting... - [%s%s]\n%s", modelName, st->modeName, modeExtra, estBuf);
+    } else if (st->isCharging) {
+        _snwprintf(outTip, maxLen, L"%s: %d%% - [%s - Charging%s]\n%s", modelName, effPercent, st->modeName, modeExtra, estBuf);
     } else {
-        _snwprintf(outTip, maxLen, L"URX Core75: %d%% - [%s]\n%s", effPercent, s_currentStatus.modeName, estBuf);
+        _snwprintf(outTip, maxLen, L"%s: %d%% - [%s%s]\n%s", modelName, effPercent, st->modeName, modeExtra, estBuf);
     }
     outTip[maxLen - 1] = L'\0';
 }
 
-static void ClearTrayToast(void) {
-    s_nid.uFlags = NIF_INFO;
-    s_nid.szInfo[0] = L'\0';
-    s_nid.szInfoTitle[0] = L'\0';
-    s_nid.dwInfoFlags = 0;
-    Shell_NotifyIconW(NIM_MODIFY, &s_nid);
+static void ShowDeviceToast(NOTIFYICONDATAW *nid, const WCHAR *title, const WCHAR *msg, DWORD flags) {
+    if (!nid) return;
+    nid->uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
+    wcsncpy(nid->szInfoTitle, title, 63);
+    nid->szInfoTitle[63] = L'\0';
+    wcsncpy(nid->szInfo, msg, 255);
+    nid->szInfo[255] = L'\0';
+    nid->dwInfoFlags = flags;
+    Shell_NotifyIconW(NIM_MODIFY, nid);
 }
 
-static void ShowTrayToast(const WCHAR *title, const WCHAR *msg, DWORD flags) {
-    s_lastManualToastTick = GetTickCount();
-    s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO;
-    wcsncpy(s_nid.szInfoTitle, title, 63);
-    s_nid.szInfoTitle[63] = L'\0';
-    wcsncpy(s_nid.szInfo, msg, 255);
-    s_nid.szInfo[255] = L'\0';
-    s_nid.dwInfoFlags = flags;
-    Shell_NotifyIconW(NIM_MODIFY, &s_nid);
+static void ClearDeviceToast(NOTIFYICONDATAW *nid) {
+    if (!nid) return;
+    nid->uFlags = NIF_INFO;
+    nid->szInfo[0] = L'\0';
+    nid->szInfoTitle[0] = L'\0';
+    nid->dwInfoFlags = 0;
+    Shell_NotifyIconW(NIM_MODIFY, nid);
 }
 
-static void UpdateTrayIcon(void) {
+static void CheckDeviceAlerts(DeviceModel model, DeviceSettings *ds, NOTIFYICONDATAW *nid, int percent, BOOL isCharging, BOOL isDisc) {
+    if (!ds || !nid) return;
+    const WCHAR *modelName = (model == MODEL_COREM1) ? L"URX Core M1" : L"URX Core75";
+    WCHAR toastBuf[256];
+    WCHAR titleBuf[64];
+
+    // Low Battery
+    if (ds->lowBatteryAlert && percent > 0 && percent <= ds->lowAlertThreshold && !isCharging && !isDisc) {
+        if (!ds->lowAlertShownForDischarge) {
+            _snwprintf(titleBuf, 64, L"%s - Low Battery Alert", modelName);
+            _snwprintf(toastBuf, 255, L"Battery is down to %d%%. Connect the USB cable to charge.", percent);
+            ShowDeviceToast(nid, titleBuf, toastBuf, NIIF_WARNING);
+            ds->lowAlertShownForDischarge = TRUE;
+        }
+    } else if (percent > (ds->lowAlertThreshold + 5) || isCharging) {
+        ds->lowAlertShownForDischarge = FALSE;
+    }
+
+    // Longevity
+    if (ds->longevityAlert && percent >= ds->longevityAlertThreshold &&
+        (percent < ds->highAlertThreshold || !ds->highBatteryAlert) && isCharging && !isDisc) {
+        if (!ds->longevityAlertShownForCharge) {
+            _snwprintf(titleBuf, 64, L"%s - Battery Longevity Alert", modelName);
+            _snwprintf(toastBuf, 255, L"Battery reached %d%%. Disconnect charger to protect lithium longevity.", percent);
+            ShowDeviceToast(nid, titleBuf, toastBuf, NIIF_INFO);
+            ds->longevityAlertShownForCharge = TRUE;
+        }
+    } else if (percent < (ds->longevityAlertThreshold - 5) || !isCharging) {
+        ds->longevityAlertShownForCharge = FALSE;
+    }
+
+    // High / Full
+    if (ds->highBatteryAlert && percent >= ds->highAlertThreshold && isCharging && !isDisc) {
+        if (!ds->highAlertShownForCharge) {
+            _snwprintf(titleBuf, 64, L"%s - High Battery Alert", modelName);
+            _snwprintf(toastBuf, 255, L"Battery reached %d%%. Fully charged and ready for wireless use.", percent);
+            ShowDeviceToast(nid, titleBuf, toastBuf, NIIF_INFO);
+            ds->highAlertShownForCharge = TRUE;
+        }
+    } else if (percent < (ds->highAlertThreshold - 5) || !isCharging) {
+        ds->highAlertShownForCharge = FALSE;
+    }
+}
+
+static void UpdateTrayIcon(DeviceModel model) {
+    NOTIFYICONDATAW *nid = NULL;
+    HICON *hCurrentIcon = NULL;
+    DeviceStatus *st = NULL;
+    BatteryStatsContext *stats = NULL;
+    CenterIconStyle style = ICON_CENTER_PERCENT;
+
+#if defined(BUILD_TARGET_CORE75)
+    if (model == MODEL_CORE75) {
+        nid = &s_nidCore75;
+        hCurrentIcon = &s_hCurrentIconCore75;
+        st = &s_statusCore75;
+        stats = &s_statsCore75;
+        style = g_Settings.core75.centerStyle;
+    }
+#endif
+#if defined(BUILD_TARGET_COREM1)
+    if (model == MODEL_COREM1) {
+        nid = &s_nidCoreM1;
+        hCurrentIcon = &s_hCurrentIconCoreM1;
+        st = &s_statusCoreM1;
+        stats = &s_statsCoreM1;
+        style = g_Settings.corem1.centerStyle;
+    }
+#endif
+
+    if (!nid || !st || !stats || !hCurrentIcon) return;
+
     BOOL lightTaskbar = IconGen_IsTaskbarLight();
-    BOOL isDisconnected = (s_currentStatus.mode == MODE_DISCONNECTED);
-    int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+    BOOL isDisconnected = (st->mode == MODE_DISCONNECTED);
+    int effPercent = (st->batteryPercent >= 0) ? st->batteryPercent : st->lastKnownPercent;
 
     HICON hNewIcon = IconGen_CreateBatteryIcon(
         effPercent,
-        s_currentStatus.isCharging,
+        st->isCharging,
         s_breathPhase,
-        s_currentStatus.isSleeping,
+        st->isSleeping,
         isDisconnected,
-        g_Settings.centerStyle,
+        style,
+        model,
         lightTaskbar
     );
 
     if (hNewIcon) {
-        s_nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-        s_nid.hIcon = hNewIcon;
-        FormatRichTooltip(s_nid.szTip, 128);
-        s_nid.szTip[127] = L'\0';
+        nid->uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+        nid->hIcon = hNewIcon;
+        FormatDeviceTooltip(model, st, stats, nid->szTip, 128);
+        nid->szTip[127] = L'\0';
 
-        Shell_NotifyIconW(NIM_MODIFY, &s_nid);
+        Shell_NotifyIconW(NIM_MODIFY, nid);
 
-        if (s_hCurrentIcon) {
-            DestroyIcon(s_hCurrentIcon);
-        }
-        s_hCurrentIcon = hNewIcon;
+        if (*hCurrentIcon) DestroyIcon(*hCurrentIcon);
+        *hCurrentIcon = hNewIcon;
 
-        if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
-            SendMessageW(s_hDetailsWnd, WM_SETICON, ICON_BIG, (LPARAM)s_hCurrentIcon);
-            SendMessageW(s_hDetailsWnd, WM_SETICON, ICON_SMALL, (LPARAM)s_hCurrentIcon);
+        if (s_hDetailsWnd && IsWindow(s_hDetailsWnd) && s_detailsTargetModel == model) {
+            SendMessageW(s_hDetailsWnd, WM_SETICON, ICON_BIG, (LPARAM)*hCurrentIcon);
+            SendMessageW(s_hDetailsWnd, WM_SETICON, ICON_SMALL, (LPARAM)*hCurrentIcon);
         }
     }
 }
 
+static void UpdateAllTrayIcons(void) {
+#if defined(BUILD_TARGET_CORE75)
+    UpdateTrayIcon(MODEL_CORE75);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+    UpdateTrayIcon(MODEL_COREM1);
+#endif
+}
+
+static void SyncAnimationTimer(void) {
+    BOOL anyCharging = FALSE;
+#if defined(BUILD_TARGET_CORE75)
+    if (s_statusCore75.isCharging) anyCharging = TRUE;
+#endif
+#if defined(BUILD_TARGET_COREM1)
+    if (s_statusCoreM1.isCharging) anyCharging = TRUE;
+#endif
+
+    if (anyCharging) {
+        if (!s_isAnimating) {
+            s_isAnimating = TRUE;
+            SetTimer(s_hWnd, IDT_ANIM_TIMER, 65, NULL); // ~15.4 FPS
+        }
+    } else {
+        if (s_isAnimating) {
+            s_isAnimating = FALSE;
+            KillTimer(s_hWnd, IDT_ANIM_TIMER);
+            s_breathPhase = 0.0f;
+            UpdateAllTrayIcons();
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Details & Telemetry Dialog
+// -----------------------------------------------------------------------------
 static void DrawCardPanel(HDC hdc, int x, int y, int w, int h, COLORREF bgCol, COLORREF borderCol, int radius) {
     HBRUSH hBr = CreateSolidBrush(bgCol);
     HPEN hPen = CreatePen(PS_SOLID, 1, borderCol);
     HBRUSH hOldBr = (HBRUSH)SelectObject(hdc, hBr);
     HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
-
     RoundRect(hdc, x, y, x + w, y + h, radius, radius);
-
     SelectObject(hdc, hOldBr);
     SelectObject(hdc, hOldPen);
     DeleteObject(hBr);
@@ -335,7 +459,6 @@ static void DrawCardRow(HDC hdc, int left, int top, int w, int rowH,
                         const WCHAR *label, const WCHAR *val,
                         COLORREF colLabel, COLORREF colVal, HFONT hFont) {
     SelectObject(hdc, hFont);
-
     SetTextColor(hdc, colLabel);
     RECT rLabel = { left, top, left + (w / 2), top + rowH };
     DrawTextW(hdc, label, -1, &rLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -357,7 +480,7 @@ static void CleanupDetailsFonts(void) {
     if (s_hFontTitle)  { DeleteObject(s_hFontTitle);  s_hFontTitle = NULL; }
     if (s_hFontSub)    { DeleteObject(s_hFontSub);    s_hFontSub = NULL; }
     if (s_hFontSecHdr) { DeleteObject(s_hFontSecHdr); s_hFontSecHdr = NULL; }
-    if (s_hFontRow)    { DeleteObject(s_hFontRow);    s_hFontRow = NULL; }
+    s_hFontRow = NULL; // Aliased to s_hFontSub, avoid double-free
     if (s_hFontBadge)  { DeleteObject(s_hFontBadge);  s_hFontBadge = NULL; }
     if (s_hFontBtn)    { DeleteObject(s_hFontBtn);    s_hFontBtn = NULL; }
     s_detailsDpi = 0;
@@ -380,9 +503,7 @@ static void EnsureDetailsFonts(int dpi) {
     s_hFontSecHdr = CreateFontW(-SC_FNT(10), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                 DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    s_hFontRow    = CreateFontW(-SC_FNT(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    s_hFontRow    = s_hFontSub; // Reuse identical 11pt Segoe UI regular font
     s_hFontBadge  = CreateFontW(-SC_FNT(12), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                 DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -452,12 +573,8 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             DeleteObject(hBrBg);
 
             int dpi = 96;
-            if (s_pfnGetDpiForWindow) {
-                dpi = s_pfnGetDpiForWindow(hWnd);
-            }
-            if (dpi <= 0) {
-                dpi = GetDeviceCaps(hdc, LOGPIXELSY);
-            }
+            if (s_pfnGetDpiForWindow) dpi = s_pfnGetDpiForWindow(hWnd);
+            if (dpi <= 0) dpi = GetDeviceCaps(hdc, LOGPIXELSY);
             if (dpi <= 0) dpi = 96;
             EnsureDetailsFonts(dpi);
             #define SC(val) MulDiv((val), dpi, 96)
@@ -468,35 +585,67 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             int cardW = width - (pad * 2);
             int curY = SC(14);
 
+            const DeviceStatus *st = NULL;
+            const BatteryStatsContext *stats = NULL;
+            const DeviceSettings *ds = NULL;
+            const WCHAR *titleStr = L"URX Peripheral";
+            const WCHAR *subTitleStr = L"Device Telemetry \x2022 v2.0.0";
+            BOOL isFiltering = FALSE;
+
+#if defined(BUILD_TARGET_CORE75)
+            if (s_detailsTargetModel == MODEL_CORE75) {
+                st = &s_statusCore75;
+                stats = &s_statsCore75;
+                ds = &g_Settings.core75;
+                titleStr = L"URX Core75";
+                subTitleStr = L"Mechanical Keyboard Telemetry \x2022 v2.0.0";
+                isFiltering = DeviceCore75_IsFilteringTransient();
+            }
+#endif
+#if defined(BUILD_TARGET_COREM1)
+            if (s_detailsTargetModel == MODEL_COREM1) {
+                st = &s_statusCoreM1;
+                stats = &s_statsCoreM1;
+                ds = &g_Settings.corem1;
+                titleStr = L"URX Core M1";
+                subTitleStr = L"Wireless Gaming Mouse Telemetry \x2022 v2.0.0";
+                isFiltering = DeviceCoreM1_IsFilteringTransient();
+            }
+#endif
+
             // Title & Subtitle
             SelectObject(memDC, s_hFontTitle);
             SetTextColor(memDC, colTextPri);
-            TextOutW(memDC, pad, curY, L"URX Core75", 10);
+            TextOutW(memDC, pad, curY, titleStr, wcslen(titleStr));
 
             SelectObject(memDC, s_hFontSub);
             SetTextColor(memDC, colTextSec);
-            TextOutW(memDC, pad, curY + SC(20), L"Mechanical Keyboard Telemetry \x2022 v1.5.1", 38);
+            TextOutW(memDC, pad, curY + SC(20), subTitleStr, wcslen(subTitleStr));
 
-            // Live status & battery badge
-            int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+            // Status Badge
+            int effPercent = (st && st->batteryPercent >= 0) ? st->batteryPercent : (st ? st->lastKnownPercent : -1);
             WCHAR badgeText[32];
             COLORREF colBadgeBg, colBadgeBdr, colBadgeText;
-            if (s_currentStatus.mode == MODE_DISCONNECTED) {
+            if (!st || st->mode == MODE_DISCONNECTED) {
                 wcscpy(badgeText, L"Offline");
                 colBadgeBg = isDark ? RGB(50, 25, 25) : RGB(254, 226, 226);
                 colBadgeBdr = isDark ? RGB(100, 45, 45) : RGB(248, 113, 113);
                 colBadgeText = isDark ? RGB(248, 113, 113) : RGB(185, 28, 28);
+            } else if (st->isSleeping) {
+                if (effPercent < 0) {
+                    wcscpy(badgeText, L"Asleep");
+                } else {
+                    _snwprintf(badgeText, 32, L"%d%% - Asleep", effPercent);
+                }
+                colBadgeBg = isDark ? RGB(20, 45, 65) : RGB(224, 242, 254);
+                colBadgeBdr = isDark ? RGB(40, 90, 130) : RGB(56, 189, 248);
+                colBadgeText = isDark ? RGB(56, 189, 248) : RGB(3, 105, 161);
             } else if (effPercent < 0) {
                 wcscpy(badgeText, L"Connecting...");
                 colBadgeBg = isDark ? RGB(35, 35, 45) : RGB(240, 240, 245);
                 colBadgeBdr = isDark ? RGB(70, 70, 85) : RGB(200, 200, 210);
                 colBadgeText = isDark ? RGB(180, 180, 200) : RGB(100, 100, 120);
-            } else if (s_currentStatus.isSleeping) {
-                _snwprintf(badgeText, 32, L"%d%% - Asleep", effPercent);
-                colBadgeBg = isDark ? RGB(20, 45, 65) : RGB(224, 242, 254);
-                colBadgeBdr = isDark ? RGB(40, 90, 130) : RGB(56, 189, 248);
-                colBadgeText = isDark ? RGB(56, 189, 248) : RGB(3, 105, 161);
-            } else if (s_currentStatus.isCharging) {
+            } else if (st->isCharging) {
                 _snwprintf(badgeText, 32, L"%d%% - Charging", effPercent);
                 colBadgeBg = isDark ? RGB(6, 60, 45) : RGB(209, 250, 229);
                 colBadgeBdr = isDark ? RGB(16, 185, 129) : RGB(16, 185, 129);
@@ -523,22 +672,26 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             curY += SC(44);
 
-            // Data string formatting
             WCHAR estBuf[64];
-            BatteryStats_FormatRemainingText(
-                effPercent,
-                s_currentStatus.isCharging,
-                s_currentStatus.isSleeping,
-                (s_currentStatus.mode == MODE_DISCONNECTED),
-                estBuf, 64
-            );
+            if (stats && st) {
+                BatteryStats_FormatRemainingText(
+                    stats,
+                    effPercent,
+                    st->isCharging,
+                    st->isSleeping,
+                    (st->mode == MODE_DISCONNECTED),
+                    estBuf, 64
+                );
+            } else {
+                wcscpy(estBuf, L"Offline");
+            }
 
-            double dRate = BatteryStats_GetDischargeRatePerHour();
-            double cRate = BatteryStats_GetChargeRatePerHour();
+            double dRate = stats ? BatteryStats_GetDischargeRatePerHour(stats) : 0.0;
+            double cRate = stats ? BatteryStats_GetChargeRatePerHour(stats) : 0.0;
 
             double endHours = 0.0;
             WCHAR enduranceStr[64];
-            if (BatteryStats_GetEstimatedEnduranceHours(&endHours)) {
+            if (stats && BatteryStats_GetEstimatedEnduranceHours(stats, &endHours)) {
                 if (endHours >= 24.0) {
                     double days = endHours / 24.0;
                     _snwprintf(enduranceStr, 64, L"~%.0f hrs (~%.1f days)", endHours, days);
@@ -557,8 +710,8 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             }
             _snwprintf(cRateStr, 32, L"~%.1f%% / hour", cRate);
 
-            // Card 1: Battery & Runtime
-            int card1H = SC(92);
+            // Card 1: BATTERY & RUNTIME
+            int card1H = (s_detailsTargetModel == MODEL_COREM1) ? SC(130) : SC(92);
             DrawCardPanel(memDC, pad, curY, cardW, card1H, colCardBg, colBorder, SC(8));
             SelectObject(memDC, s_hFontSecHdr);
             SetTextColor(memDC, colHeader);
@@ -570,16 +723,33 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             int innerX = pad + SC(12);
 
             WCHAR modeDisplay[64];
-            wcsncpy(modeDisplay, s_currentStatus.modeName, 63);
+            wcsncpy(modeDisplay, st ? st->modeName : L"Disconnected", 63);
             modeDisplay[63] = L'\0';
 
             DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Connection Mode", modeDisplay, colTextSec, colTextPri, s_hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Estimated Remaining", estBuf, colTextSec, colTextPri, s_hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, L"Full Endurance", enduranceStr, colTextSec, colTextPri, s_hFontRow);
 
+            if (s_detailsTargetModel == MODEL_COREM1) {
+                WCHAR telemRow4[64] = {0};
+                WCHAR telemRow5[64] = {0};
+                if (st && st->dpiValue > 0) {
+                    _snwprintf(telemRow4, 64, L"%d DPI", st->dpiValue);
+                } else {
+                    wcscpy(telemRow4, L"Unknown");
+                }
+                if (st && st->pollingRateHz > 0) {
+                    _snwprintf(telemRow5, 64, L"%d Hz", st->pollingRateHz);
+                } else {
+                    wcscpy(telemRow5, (st && st->mode != MODE_DISCONNECTED) ? L"Measuring..." : L"Offline");
+                }
+                DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Sensor DPI", telemRow4, colTextSec, colTextPri, s_hFontRow);
+                DrawCardRow(memDC, innerX, innerY + (rowH * 4), innerW, rowH, L"Polling Rate", telemRow5, colTextSec, colTextPri, s_hFontRow);
+            }
+
             curY += card1H + SC(10);
 
-            // Card 2: Consumption Rates
+            // Card 2: CONSUMPTION RATES
             int card2H = SC(92);
             DrawCardPanel(memDC, pad, curY, cardW, card2H, colCardBg, colBorder, SC(8));
             SelectObject(memDC, s_hFontSecHdr);
@@ -590,8 +760,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, L"Discharge Rate", dRateStr, colTextSec, colTextPri, s_hFontRow);
             DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, L"Charge Rate", cRateStr, colTextSec, colTextPri, s_hFontRow);
 
-            BOOL isFiltering = BatteryMonitor_IsFilteringTransient();
-            BOOL isCalibrated = BatteryStats_IsCalibrated();
+            BOOL isCalibrated = stats ? BatteryStats_IsCalibrated(stats) : FALSE;
             const WCHAR *telemStatus = isFiltering ? L"Stabilizing (ADC filter)"
                                                    : (isCalibrated ? L"Calibrated (Profiling)" : L"Calibrating (Learning)");
             COLORREF colTelem = isFiltering ? (isDark ? RGB(251, 191, 36) : RGB(217, 119, 6))
@@ -602,7 +771,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             curY += card2H + SC(10);
 
-            // Card 3: Alert Configurations
+            // Card 3: ALERT CONFIGURATIONS
             int card3H = SC(112);
             DrawCardPanel(memDC, pad, curY, cardW, card3H, colCardBg, colBorder, SC(8));
             SelectObject(memDC, s_hFontSecHdr);
@@ -611,20 +780,23 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             innerY = curY + SC(28);
             WCHAR alertLabel[64];
-            _snwprintf(alertLabel, 64, L"Low Battery Alert (<=%d%%)", g_Settings.lowAlertThreshold);
+            int lowThresh = ds ? ds->lowAlertThreshold : 20;
+            _snwprintf(alertLabel, 64, L"Low Battery Alert (<=%d%%)", lowThresh);
+            BOOL lowEn = ds ? ds->lowBatteryAlert : FALSE;
             DrawCardRow(memDC, innerX, innerY + (rowH * 0), innerW, rowH, alertLabel,
-                        g_Settings.lowBatteryAlert ? L"Enabled" : L"Disabled",
-                        colTextSec, g_Settings.lowBatteryAlert ? colAccent : colMuted, s_hFontRow);
+                        lowEn ? L"Enabled" : L"Disabled", colTextSec, lowEn ? colAccent : colMuted, s_hFontRow);
 
-            _snwprintf(alertLabel, 64, L"Longevity Alert (%d%%)", g_Settings.longevityAlertThreshold);
+            int longThresh = ds ? ds->longevityAlertThreshold : 85;
+            _snwprintf(alertLabel, 64, L"Longevity Alert (%d%%)", longThresh);
+            BOOL longEn = ds ? ds->longevityAlert : FALSE;
             DrawCardRow(memDC, innerX, innerY + (rowH * 1), innerW, rowH, alertLabel,
-                        g_Settings.longevityAlert ? L"Enabled" : L"Disabled",
-                        colTextSec, g_Settings.longevityAlert ? colAccent : colMuted, s_hFontRow);
+                        longEn ? L"Enabled" : L"Disabled", colTextSec, longEn ? colAccent : colMuted, s_hFontRow);
 
-            _snwprintf(alertLabel, 64, L"Full Battery Alert (%d%%)", g_Settings.highAlertThreshold);
+            int highThresh = ds ? ds->highAlertThreshold : 100;
+            _snwprintf(alertLabel, 64, L"Full Battery Alert (%d%%)", highThresh);
+            BOOL highEn = ds ? ds->highBatteryAlert : FALSE;
             DrawCardRow(memDC, innerX, innerY + (rowH * 2), innerW, rowH, alertLabel,
-                        g_Settings.highBatteryAlert ? L"Enabled" : L"Disabled",
-                        colTextSec, g_Settings.highBatteryAlert ? colAccent : colMuted, s_hFontRow);
+                        highEn ? L"Enabled" : L"Disabled", colTextSec, highEn ? colAccent : colMuted, s_hFontRow);
 
             DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Start with Windows",
                         g_Settings.startWithWindows ? L"Enabled" : L"Disabled",
@@ -654,7 +826,6 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
 
-            // Cleanup GDI objects
             SelectObject(memDC, oldBmp);
             DeleteObject(memBmp);
             DeleteDC(memDC);
@@ -723,10 +894,29 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
     return 0;
 }
 
-static void ShowDetailsDialog(HWND hWnd) {
+static void ShowDetailsDialog(HWND hWnd, DeviceModel model) {
+    s_detailsTargetModel = model;
+    const WCHAR *dlgTitle = (model == MODEL_COREM1) ? L"Core Monitor - Core M1 Mouse Telemetry" : L"Core Monitor - Core75 Keyboard Telemetry";
+
+    HDC hdc = GetDC(NULL);
+    int dpi = 96;
+    if (s_pfnGetDpiForWindow && hWnd) dpi = s_pfnGetDpiForWindow(hWnd);
+    if (dpi <= 0) dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+    ReleaseDC(NULL, hdc);
+    if (dpi <= 0) dpi = 96;
+
+    int clientW = MulDiv(400, dpi, 96);
+    int clientH = MulDiv((model == MODEL_COREM1) ? 470 : 432, dpi, 96);
+
+    RECT rc = { 0, 0, clientW, clientH };
+    AdjustWindowRectEx(&rc, WS_CAPTION | WS_SYSMENU, FALSE, 0);
+    int winW = rc.right - rc.left;
+    int winH = rc.bottom - rc.top;
+
     if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
+        SetWindowTextW(s_hDetailsWnd, dlgTitle);
+        SetWindowPos(s_hDetailsWnd, HWND_TOP, 0, 0, winW, winH, SWP_NOMOVE | SWP_SHOWWINDOW);
         ShowWindow(s_hDetailsWnd, SW_RESTORE);
-        SetWindowPos(s_hDetailsWnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         SetForegroundWindow(s_hDetailsWnd);
         BringWindowToTop(s_hDetailsWnd);
         InvalidateRect(s_hDetailsWnd, NULL, TRUE);
@@ -746,44 +936,19 @@ static void ShowDetailsDialog(HWND hWnd) {
         s_detailsClassRegistered = TRUE;
     }
 
-    HDC hdc = GetDC(NULL);
-    int dpi = 96;
-    if (s_pfnGetDpiForWindow && hWnd) {
-        dpi = s_pfnGetDpiForWindow(hWnd);
-    }
-    if (dpi <= 0) {
-        dpi = GetDeviceCaps(hdc, LOGPIXELSY);
-    }
-    ReleaseDC(NULL, hdc);
-    if (dpi <= 0) dpi = 96;
-
-    int clientW = MulDiv(400, dpi, 96);
-    int clientH = MulDiv(432, dpi, 96);
-
-    RECT rc = { 0, 0, clientW, clientH };
-    AdjustWindowRectEx(&rc, WS_CAPTION | WS_SYSMENU, FALSE, 0);
-    int winW = rc.right - rc.left;
-    int winH = rc.bottom - rc.top;
-
     RECT workArea;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
     int posX = workArea.left + (workArea.right - workArea.left - winW) / 2;
     int posY = workArea.top + (workArea.bottom - workArea.top - winH) / 2;
 
     s_hDetailsWnd = CreateWindowExW(
-        0,
-        DETAILS_CLASS_NAME,
-        L"Core Monitor - Battery & Device Statistics",
+        0, DETAILS_CLASS_NAME, dlgTitle,
         WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
         posX, posY, winW, winH,
         hWnd, NULL, hInstance, NULL
     );
 
     if (s_hDetailsWnd) {
-        if (s_hCurrentIcon) {
-            SendMessageW(s_hDetailsWnd, WM_SETICON, ICON_BIG, (LPARAM)s_hCurrentIcon);
-            SendMessageW(s_hDetailsWnd, WM_SETICON, ICON_SMALL, (LPARAM)s_hCurrentIcon);
-        }
         BOOL isDark = IsAppInDarkMode();
         ApplyWindowTheme(s_hDetailsWnd, isDark);
         ShowWindow(s_hDetailsWnd, SW_SHOW);
@@ -792,159 +957,153 @@ static void ShowDetailsDialog(HWND hWnd) {
     }
 }
 
-static void PollAndUpdate(void) {
+// -----------------------------------------------------------------------------
+// Polling & State Management
+// -----------------------------------------------------------------------------
+static void PollAndUpdate(DeviceModel model) {
     DWORD now = GetTickCount();
-    int sleepMin = DEFAULT_SLEEP_MINUTES;
-    DWORD sleepMs = (DWORD)sleepMin * 60 * 1000;
+    DWORD sleepMs = 0;
+    DWORD *pLastInputTick = NULL;
+    DWORD *pLastRadioTick = NULL;
+    DeviceStatus *st = NULL;
+    BatteryStatsContext *stats = NULL;
+    DeviceSettings *ds = NULL;
+    NOTIFYICONDATAW *nid = NULL;
+    BOOL (*pfnPoll)(DeviceStatus*, BOOL) = NULL;
 
-    DWORD idleMs = (s_lastKeyboardInputTick != 0) ? (DWORD)(now - s_lastKeyboardInputTick) : (sleepMs + 1);
+#if defined(BUILD_TARGET_CORE75)
+    if (model == MODEL_CORE75) {
+        sleepMs = (DWORD)CORE75_DEFAULT_SLEEP_MINUTES * 60 * 1000;
+        pLastInputTick = &s_lastCore75InputTick;
+        pLastRadioTick = &s_lastCore75RadioQueryTick;
+        st = &s_statusCore75;
+        stats = &s_statsCore75;
+        ds = &g_Settings.core75;
+        nid = &s_nidCore75;
+        pfnPoll = DeviceCore75_Poll;
+    }
+#endif
+#if defined(BUILD_TARGET_COREM1)
+    if (model == MODEL_COREM1) {
+        sleepMs = (DWORD)COREM1_DEFAULT_SLEEP_MINUTES * 60 * 1000;
+        pLastInputTick = &s_lastCoreM1InputTick;
+        pLastRadioTick = &s_lastCoreM1RadioQueryTick;
+        st = &s_statusCoreM1;
+        stats = &s_statsCoreM1;
+        ds = &g_Settings.corem1;
+        nid = &s_nidCoreM1;
+        pfnPoll = DeviceCoreM1_Poll;
+    }
+#endif
+
+    if (!pLastInputTick || !pLastRadioTick || !st || !stats || !ds || !nid || !pfnPoll) return;
+
+    DWORD idleMs = (*pLastInputTick != 0) ? (DWORD)(now - *pLastInputTick) : (sleepMs + 1);
     BOOL isSleeping = FALSE;
     BOOL allowWirelessQuery = FALSE;
-    BOOL wasWakeOrRefresh = (s_lastRadioQueryTick == 0);
+    BOOL wasWakeOrRefresh = (*pLastRadioTick == 0);
 
     if (wasWakeOrRefresh) {
-        // Initial one-shot probe on startup, wake verification, or explicit manual refresh
         allowWirelessQuery = TRUE;
-    } else if (s_currentStatus.mode == MODE_2P4G) {
+    } else if (st->mode == MODE_2P4G) {
         if (idleMs >= sleepMs) {
-            // No keystrokes for firmware sleep timeout: keyboard is asleep!
             isSleeping = TRUE;
-            allowWirelessQuery = FALSE; // STRICT: Zero over-the-air packets while asleep!
+            allowWirelessQuery = FALSE;
         } else {
-            // Keyboard is active (user typed recently).
-            // Normal 5-minute interval: typing in last 60s and >= 5 minutes since last successful query
-            if ((DWORD)(now - s_lastKeyboardInputTick) < 60000 && (DWORD)(now - s_lastRadioQueryTick) >= 300000) {
+            if ((DWORD)(now - *pLastInputTick) < 60000 && (DWORD)(now - *pLastRadioTick) >= 300000) {
                 allowWirelessQuery = TRUE;
             }
         }
-    } else if (s_currentStatus.mode == MODE_WIRED) {
+    } else if (st->mode == MODE_WIRED) {
         allowWirelessQuery = TRUE;
     }
 
-    BOOL liveQuerySuccess = BatteryMonitor_Poll(&s_currentStatus, allowWirelessQuery);
+    BOOL liveSuccess = pfnPoll(st, allowWirelessQuery);
 
-    if (allowWirelessQuery && s_currentStatus.mode == MODE_2P4G) {
-        // Record query attempt timestamp (prevents repeated timeout hanging if keyboard is switched off - Issue 4)
-        s_lastRadioQueryTick = now;
-        if (liveQuerySuccess && s_lastKeyboardInputTick == 0) {
-            s_lastKeyboardInputTick = now;
-        }
-    } else if (s_currentStatus.mode == MODE_WIRED) {
-        s_lastRadioQueryTick = now;
-        s_lastKeyboardInputTick = now;
+    if (allowWirelessQuery && st->mode == MODE_2P4G) {
+        *pLastRadioTick = now;
+        if (liveSuccess && *pLastInputTick == 0) *pLastInputTick = now;
+    } else if (st->mode == MODE_WIRED) {
+        *pLastRadioTick = now;
+        *pLastInputTick = now;
     }
 
-    // Set states for 2.4G
-    if (s_currentStatus.mode == MODE_2P4G) {
-        if (liveQuerySuccess) {
-            isSleeping = FALSE;
-        } else if (wasWakeOrRefresh || idleMs >= sleepMs || s_lastKeyboardInputTick == 0) {
-            // Over-the-air probe failed (keyboard asleep, switched off, or out of range) or idle timeout reached
+    if (st->mode == MODE_2P4G) {
+        if (liveSuccess) {
+            isSleeping = (model == MODEL_COREM1) ? st->isSleeping : FALSE;
+        } else if (wasWakeOrRefresh || idleMs >= sleepMs || *pLastInputTick == 0) {
             isSleeping = TRUE;
-            s_lastKeyboardInputTick = 0; // Clear unverified input tick
+            *pLastInputTick = 0;
         } else {
-            // During active typing, a dropped periodic background poll shouldn't mark asleep
             isSleeping = FALSE;
         }
-        s_currentStatus.isSleeping = isSleeping;
-        int effBatt = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
-        s_currentStatus.batteryPercent = effBatt;
-        s_currentStatus.lastKnownPercent = effBatt;
+        st->isSleeping = isSleeping;
+        int eff = (st->batteryPercent >= 0) ? st->batteryPercent : st->lastKnownPercent;
+        st->batteryPercent = eff;
+        st->lastKnownPercent = eff;
     }
 
-    BOOL isDisconnected = (s_currentStatus.mode == MODE_DISCONNECTED);
-    int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
+    BOOL isDisc = (st->mode == MODE_DISCONNECTED);
+    int effPercent = (st->batteryPercent >= 0) ? st->batteryPercent : st->lastKnownPercent;
+    BatteryStats_Record(stats, effPercent, st->isCharging, isDisc);
 
-    // Record battery observation in statistics engine
-    BatteryStats_Record(effPercent, s_currentStatus.isCharging, isDisconnected);
+    CheckDeviceAlerts(model, ds, nid, st->batteryPercent, st->isCharging, isDisc);
 
-    WCHAR toastBuf[256];
-
-    // 1. Low battery alert (configurable threshold: <= lowAlertThreshold while discharging)
-    if (g_Settings.lowBatteryAlert &&
-        s_currentStatus.batteryPercent > 0 &&
-        s_currentStatus.batteryPercent <= g_Settings.lowAlertThreshold &&
-        !s_currentStatus.isCharging &&
-        !isDisconnected) {
-
-        if (!g_Settings.lowAlertShownForDischarge) {
-            _snwprintf(toastBuf, 255, L"Battery is down to %d%%. Connect the USB cable to charge.", s_currentStatus.batteryPercent);
-            ShowTrayToast(L"URX Core75 - Low Battery Alert", toastBuf, NIIF_WARNING);
-            g_Settings.lowAlertShownForDischarge = TRUE;
-        }
-    } else if (s_currentStatus.batteryPercent > (g_Settings.lowAlertThreshold + 5) || s_currentStatus.isCharging) {
-        g_Settings.lowAlertShownForDischarge = FALSE;
-    }
-
-    // 2. Battery longevity alert (configurable threshold: >= longevityAlertThreshold while charging)
-    if (g_Settings.longevityAlert &&
-        s_currentStatus.batteryPercent >= g_Settings.longevityAlertThreshold &&
-        (s_currentStatus.batteryPercent < g_Settings.highAlertThreshold || !g_Settings.highBatteryAlert) &&
-        s_currentStatus.isCharging &&
-        !isDisconnected) {
-
-        if (!g_Settings.longevityAlertShownForCharge) {
-            _snwprintf(toastBuf, 255, L"Battery reached %d%%. Disconnect charger to protect lithium longevity.", s_currentStatus.batteryPercent);
-            ShowTrayToast(L"URX Core75 - Battery Longevity Alert", toastBuf, NIIF_INFO);
-            g_Settings.longevityAlertShownForCharge = TRUE;
-        }
-    } else if (s_currentStatus.batteryPercent < (g_Settings.longevityAlertThreshold - 5) || !s_currentStatus.isCharging) {
-        g_Settings.longevityAlertShownForCharge = FALSE;
-    }
-
-    // 3. High battery alert (configurable threshold: >= highAlertThreshold while charging)
-    if (g_Settings.highBatteryAlert &&
-        s_currentStatus.batteryPercent >= g_Settings.highAlertThreshold &&
-        s_currentStatus.isCharging &&
-        !isDisconnected) {
-
-        if (!g_Settings.highAlertShownForCharge) {
-            _snwprintf(toastBuf, 255, L"Battery reached %d%%. Fully charged and ready for wireless use.", s_currentStatus.batteryPercent);
-            ShowTrayToast(L"URX Core75 - High Battery Alert", toastBuf, NIIF_INFO);
-            g_Settings.highAlertShownForCharge = TRUE;
-        }
-    } else if (s_currentStatus.batteryPercent < (g_Settings.highAlertThreshold - 5) || !s_currentStatus.isCharging) {
-        g_Settings.highAlertShownForCharge = FALSE;
-    }
-
-    // Manage breathing animation timer:
-    // Strictly active ONLY during charging! (0.0% CPU when discharging)
-    if (s_currentStatus.isCharging) {
-        if (!s_isAnimating) {
-            s_isAnimating = TRUE;
-            SetTimer(s_hWnd, IDT_ANIM_TIMER, 65, NULL); // ~15.4 FPS
-        }
-    } else {
-        if (s_isAnimating) {
-            s_isAnimating = FALSE;
-            KillTimer(s_hWnd, IDT_ANIM_TIMER);
-            s_breathPhase = 0.0f;
-        }
-    }
-
-    // Gentle polling: poll every 60s (eliminates radio congestion, avoids typing hiccups, lets keyboard sleep deeply)
-    SetTimer(s_hWnd, IDT_POLL_TIMER, 60000, NULL);
-
-    UpdateTrayIcon();
-
-    if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
-        InvalidateRect(s_hDetailsWnd, NULL, TRUE);
-    }
-
-    // Ultra-low resource footprint: trim working set back to OS cache
+    UpdateTrayIcon(model);
+    SyncAnimationTimer();
     SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
 }
 
-static void ShowContextMenu(HWND hWnd) {
-    if (s_pfnSetPreferredAppMode) {
-        s_pfnSetPreferredAppMode(APPMODE_ALLOWDARK);
+static void ResetDevicePowerState(HWND hWnd, DeviceModel model) {
+#if defined(BUILD_TARGET_CORE75)
+    if (model == MODEL_CORE75) {
+        KillTimer(hWnd, IDT_POLL_TIMER_CORE75);
+        s_lastCore75InputTick = 0;
+        s_lastCore75RadioQueryTick = 0;
+        s_statusCore75.isSleeping = TRUE;
+        BatteryStats_ResetSessionBaseline(&s_statsCore75);
+        DeviceCore75_ResetBaseline();
+        DeviceCore75_InvalidateCache();
     }
-    if (s_pfnAllowDarkModeForWindow) {
-        s_pfnAllowDarkModeForWindow(hWnd, TRUE);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+    if (model == MODEL_COREM1) {
+        KillTimer(hWnd, IDT_POLL_TIMER_COREM1);
+        s_lastCoreM1InputTick = 0;
+        s_lastCoreM1RadioQueryTick = 0;
+        s_statusCoreM1.isSleeping = TRUE;
+        BatteryStats_ResetSessionBaseline(&s_statsCoreM1);
+        DeviceCoreM1_ResetBaseline();
+        DeviceCoreM1_InvalidateCache();
     }
-    if (s_pfnFlushMenuThemes) {
-        s_pfnFlushMenuThemes();
-    }
+#endif
+}
+
+static void ResetAllDevicesPowerState(HWND hWnd) {
+#if defined(BUILD_TARGET_CORE75)
+    ResetDevicePowerState(hWnd, MODEL_CORE75);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+    ResetDevicePowerState(hWnd, MODEL_COREM1);
+#endif
+}
+
+static void RestartAllDeviceTimers(HWND hWnd, UINT elapseMs) {
+#if defined(BUILD_TARGET_CORE75)
+    SetTimer(hWnd, IDT_POLL_TIMER_CORE75, elapseMs, NULL);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+    SetTimer(hWnd, IDT_POLL_TIMER_COREM1, elapseMs, NULL);
+#endif
+}
+
+// -----------------------------------------------------------------------------
+// Context Menus
+// -----------------------------------------------------------------------------
+static void ShowContextMenu(HWND hWnd, DeviceModel model) {
+    if (s_pfnSetPreferredAppMode) s_pfnSetPreferredAppMode(APPMODE_ALLOWDARK);
+    if (s_pfnAllowDarkModeForWindow) s_pfnAllowDarkModeForWindow(hWnd, TRUE);
+    if (s_pfnFlushMenuThemes) s_pfnFlushMenuThemes();
 
     POINT pt;
     GetCursorPos(&pt);
@@ -952,39 +1111,71 @@ static void ShowContextMenu(HWND hWnd) {
     HMENU hMenu = CreatePopupMenu();
     if (!hMenu) return;
 
-    // Header title
-    AppendMenuW(hMenu, MF_STRING | MF_GRAYED, IDM_STATUS_TITLE, L"Core Monitor");
+    const WCHAR *modelHeader = (model == MODEL_COREM1) ? L"Core Monitor - Core M1" : L"Core Monitor - Core75";
+    const DeviceStatus *st = NULL;
+    const BatteryStatsContext *stats = NULL;
+    DeviceSettings *ds = NULL;
 
-    // Live status line
-    WCHAR statusLine[128];
-    int effPercent = (s_currentStatus.batteryPercent >= 0) ? s_currentStatus.batteryPercent : s_currentStatus.lastKnownPercent;
-
-    if (s_currentStatus.mode == MODE_DISCONNECTED) {
-        _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: Disconnected");
-    } else if (effPercent < 0) {
-        _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: Connecting... - [%s]", s_currentStatus.modeName);
-    } else if (s_currentStatus.isSleeping) {
-        _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: %d%% - [Asleep - 2.4GHz]", effPercent);
-    } else if (s_currentStatus.isCharging) {
-        _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: %d%% - [%s - Charging]", effPercent, s_currentStatus.modeName);
-    } else {
-        _snwprintf(statusLine, sizeof(statusLine) / sizeof(WCHAR), L"Status: %d%% - [%s]", effPercent, s_currentStatus.modeName);
+#if defined(BUILD_TARGET_CORE75)
+    if (model == MODEL_CORE75) {
+        st = &s_statusCore75;
+        stats = &s_statsCore75;
+        ds = &g_Settings.core75;
     }
-    statusLine[(sizeof(statusLine) / sizeof(WCHAR)) - 1] = L'\0';
+#endif
+#if defined(BUILD_TARGET_COREM1)
+    if (model == MODEL_COREM1) {
+        st = &s_statusCoreM1;
+        stats = &s_statsCoreM1;
+        ds = &g_Settings.corem1;
+    }
+#endif
+
+    AppendMenuW(hMenu, MF_STRING | MF_GRAYED, IDM_STATUS_TITLE, modelHeader);
+
+    // Status line
+    WCHAR statusLine[128];
+    int effPercent = (st && st->batteryPercent >= 0) ? st->batteryPercent : (st ? st->lastKnownPercent : -1);
+    const WCHAR *modeName = st ? st->modeName : L"Disconnected";
+
+    WCHAR modeExtra[64] = {0};
+    if (st && st->mode != MODE_DISCONNECTED && model == MODEL_COREM1) {
+        if (st->dpiValue > 0 && st->pollingRateHz > 0) {
+            _snwprintf(modeExtra, 64, L" \x2022 %d DPI \x2022 %dHz", st->dpiValue, st->pollingRateHz);
+        } else if (st->dpiValue > 0) {
+            _snwprintf(modeExtra, 64, L" \x2022 %d DPI", st->dpiValue);
+        } else if (st->pollingRateHz > 0) {
+            _snwprintf(modeExtra, 64, L" \x2022 %dHz", st->pollingRateHz);
+        }
+    }
+
+    if (!st || st->mode == MODE_DISCONNECTED) {
+        _snwprintf(statusLine, 128, L"Status: Disconnected");
+    } else if (st->isSleeping) {
+        if (effPercent < 0) {
+            _snwprintf(statusLine, 128, L"Status: Asleep (Wake device) - [2.4GHz%s]", modeExtra);
+        } else {
+            _snwprintf(statusLine, 128, L"Status: %d%% - [Asleep - 2.4GHz%s]", effPercent, modeExtra);
+        }
+    } else if (effPercent < 0) {
+        _snwprintf(statusLine, 128, L"Status: Connecting... - [%s%s]", modeName, modeExtra);
+    } else if (st->isCharging) {
+        _snwprintf(statusLine, 128, L"Status: %d%% - [%s - Charging%s]", effPercent, modeName, modeExtra);
+    } else {
+        _snwprintf(statusLine, 128, L"Status: %d%% - [%s%s]", effPercent, modeName, modeExtra);
+    }
+    statusLine[127] = L'\0';
     AppendMenuW(hMenu, MF_STRING | MF_GRAYED, IDM_STATUS_INFO, statusLine);
 
-    // Battery remaining estimation line
-    WCHAR estLine[128];
-    WCHAR estBuf[64];
-    BatteryStats_FormatRemainingText(
-        effPercent,
-        s_currentStatus.isCharging,
-        s_currentStatus.isSleeping,
-        (s_currentStatus.mode == MODE_DISCONNECTED),
-        estBuf, 64
-    );
-    _snwprintf(estLine, sizeof(estLine) / sizeof(WCHAR), L"Estimate: %s", estBuf);
-    estLine[(sizeof(estLine) / sizeof(WCHAR)) - 1] = L'\0';
+    // Estimate line
+    WCHAR estLine[128], estBuf[64];
+    if (stats && st) {
+        BatteryStats_FormatRemainingText(stats, effPercent, st->isCharging, st->isSleeping, (st->mode == MODE_DISCONNECTED), estBuf, 64);
+    } else {
+        wcscpy(estBuf, L"Offline");
+    }
+    _snwprintf(estLine, 128, L"Estimate: %s", estBuf);
+    estLine[127] = L'\0';
     AppendMenuW(hMenu, MF_STRING | MF_GRAYED, IDM_STATUS_EST, estLine);
 
     AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
@@ -995,231 +1186,332 @@ static void ShowContextMenu(HWND hWnd) {
 
     // 1. Configure Icon expandable submenu
     HMENU hIconMenu = CreatePopupMenu();
-    AppendMenuW(hIconMenu, (g_Settings.centerStyle == ICON_CENTER_RING_ONLY ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+    CenterIconStyle curStyle = ds ? ds->centerStyle : ICON_CENTER_PERCENT;
+    AppendMenuW(hIconMenu, (curStyle == ICON_CENTER_RING_ONLY ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
                 IDM_STYLE_RING_ONLY, L"Show Ring-Only");
-    AppendMenuW(hIconMenu, (g_Settings.centerStyle == ICON_CENTER_PERCENT ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_STYLE_PERCENT, L"Show Number");
-    AppendMenuW(hIconMenu, (g_Settings.centerStyle == ICON_CENTER_KEYBOARD ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_STYLE_KEYBOARD, L"Show Keyboard");
+    AppendMenuW(hIconMenu, (curStyle == ICON_CENTER_PERCENT ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_STYLE_PERCENT, L"Show Battery Percentage");
+    const WCHAR *glyphLabel = (model == MODEL_COREM1) ? L"Show Mouse Icon" : L"Show Keyboard Icon";
+    AppendMenuW(hIconMenu, (curStyle == ICON_CENTER_GLYPH ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
+                IDM_STYLE_GLYPH, glyphLabel);
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hIconMenu, L"Configure Icon");
 
     // 2. Low Battery Alert submenu
     HMENU hLowMenu = CreatePopupMenu();
-    AppendMenuW(hLowMenu, (g_Settings.lowBatteryAlert ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_LOW_ENABLE, L"Enabled");
+    BOOL lowEn = ds ? ds->lowBatteryAlert : FALSE;
+    int lowThresh = ds ? ds->lowAlertThreshold : 20;
+    AppendMenuW(hLowMenu, (lowEn ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_LOW_ENABLE, L"Enabled");
     AppendMenuW(hLowMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(hLowMenu, (g_Settings.lowAlertThreshold == 10 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_LOW_10, L"10%");
-    AppendMenuW(hLowMenu, (g_Settings.lowAlertThreshold == 15 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_LOW_15, L"15%");
-    AppendMenuW(hLowMenu, (g_Settings.lowAlertThreshold == 20 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_LOW_20, L"20%");
+    AppendMenuW(hLowMenu, (lowThresh == 10 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_LOW_10, L"10%");
+    AppendMenuW(hLowMenu, (lowThresh == 15 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_LOW_15, L"15%");
+    AppendMenuW(hLowMenu, (lowThresh == 20 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_LOW_20, L"20%");
     WCHAR subMenuLabel[64];
-    _snwprintf(subMenuLabel, 64, L"Low Battery Alert (<=%d%%)", g_Settings.lowAlertThreshold);
+    _snwprintf(subMenuLabel, 64, L"Low Battery Alert (<=%d%%)", lowThresh);
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hLowMenu, subMenuLabel);
 
     // 3. Battery Longevity Alert submenu
     HMENU hLongMenu = CreatePopupMenu();
-    AppendMenuW(hLongMenu, (g_Settings.longevityAlert ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_LONG_ENABLE, L"Enabled");
+    BOOL longEn = ds ? ds->longevityAlert : FALSE;
+    int longThresh = ds ? ds->longevityAlertThreshold : 85;
+    AppendMenuW(hLongMenu, (longEn ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_LONG_ENABLE, L"Enabled");
     AppendMenuW(hLongMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(hLongMenu, (g_Settings.longevityAlertThreshold == 80 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_LONG_80, L"80%");
-    AppendMenuW(hLongMenu, (g_Settings.longevityAlertThreshold == 85 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_LONG_85, L"85%");
-    _snwprintf(subMenuLabel, 64, L"Battery Longevity Alert (%d%%)", g_Settings.longevityAlertThreshold);
+    AppendMenuW(hLongMenu, (longThresh == 80 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_LONG_80, L"80%");
+    AppendMenuW(hLongMenu, (longThresh == 85 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_LONG_85, L"85%");
+    _snwprintf(subMenuLabel, 64, L"Battery Longevity Alert (%d%%)", longThresh);
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hLongMenu, subMenuLabel);
 
     // 4. Full Battery Alert submenu
     HMENU hFullMenu = CreatePopupMenu();
-    AppendMenuW(hFullMenu, (g_Settings.highBatteryAlert ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_FULL_ENABLE, L"Enabled");
+    BOOL highEn = ds ? ds->highBatteryAlert : FALSE;
+    int highThresh = ds ? ds->highAlertThreshold : 100;
+    AppendMenuW(hFullMenu, (highEn ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_FULL_ENABLE, L"Enabled");
     AppendMenuW(hFullMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(hFullMenu, (g_Settings.highAlertThreshold == 95 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_FULL_95, L"95%");
-    AppendMenuW(hFullMenu, (g_Settings.highAlertThreshold == 100 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING,
-                IDM_FULL_100, L"100%");
-    _snwprintf(subMenuLabel, 64, L"Full Battery Alert (%d%%)", g_Settings.highAlertThreshold);
+    AppendMenuW(hFullMenu, (highThresh == 95 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_FULL_95, L"95%");
+    AppendMenuW(hFullMenu, (highThresh == 100 ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_FULL_100, L"100%");
+    _snwprintf(subMenuLabel, 64, L"Full Battery Alert (%d%%)", highThresh);
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFullMenu, subMenuLabel);
 
-    // Run on startup toggle
-    UINT autoFlags = MF_STRING;
-    if (g_Settings.startWithWindows) {
-        autoFlags |= MF_CHECKED;
-    }
+    // Run on startup
+    UINT autoFlags = MF_STRING | (g_Settings.startWithWindows ? MF_CHECKED : MF_UNCHECKED);
     AppendMenuW(hMenu, autoFlags, IDM_AUTOSTART, L"Start with Windows");
 
     AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
     AppendMenuW(hMenu, MF_STRING, IDM_EXIT, L"Exit");
 
-    // Ensure tray menu properly dismisses when clicking elsewhere
     SetForegroundWindow(hWnd);
-    TrackPopupMenuEx(hMenu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, hWnd, NULL);
+    int cmd = TrackPopupMenuEx(hMenu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_RETURNCMD, pt.x, pt.y, hWnd, NULL);
     PostMessageW(hWnd, WM_NULL, 0, 0);
-
     DestroyMenu(hMenu);
-}
 
-#ifndef RIDI_DEVICENAME
-#define RIDI_DEVICENAME 0x20000007
+    if (cmd == 0) return;
+
+    switch (cmd) {
+        case IDM_REFRESH:
+#if defined(BUILD_TARGET_CORE75)
+            if (model == MODEL_CORE75) {
+                s_lastCore75RadioQueryTick = 0;
+                DeviceCore75_InvalidateCache();
+                DeviceCore75_ForceDirectNextPoll();
+                PollAndUpdate(MODEL_CORE75);
+            }
 #endif
-
-// Determines if raw input event originated from URX Core75 keyboard
-// Uses multi-handle caching for zero-overhead (<1ns) subsequent lookups
-static BOOL IsURXKeyboardDevice(HANDLE hDevice) {
-    if (!hDevice) return FALSE; // Injected / synthetic keystrokes (OSK, Touch, SendInput, RDP)
-
-    for (int i = 0; i < s_urxDeviceCount; i++) {
-        if (s_cachedUrxDevices[i] == hDevice) return TRUE;
-    }
-    for (int i = 0; i < s_nonUrxDeviceCount; i++) {
-        if (s_cachedNonUrxDevices[i] == hDevice) return FALSE;
-    }
-
-    char name[512] = {0};
-    UINT size = sizeof(name);
-    UINT ret = GetRawInputDeviceInfoA(hDevice, RIDI_DEVICENAME, name, &size);
-    if (ret != (UINT)-1 && ret > 0) {
-        BOOL isVidMatch = (strstr(name, "36b0") != NULL || strstr(name, "36B0") != NULL);
-        BOOL isPidMatch = (strstr(name, "3002") != NULL || strstr(name, "3130") != NULL);
-
-        if (isVidMatch && isPidMatch) {
-            if (s_urxDeviceCount < MAX_CACHED_URX_DEVICES) {
-                s_cachedUrxDevices[s_urxDeviceCount++] = hDevice;
-            } else {
-                s_cachedUrxDevices[0] = hDevice;
+#if defined(BUILD_TARGET_COREM1)
+            if (model == MODEL_COREM1) {
+                s_lastCoreM1RadioQueryTick = 0;
+                DeviceCoreM1_InvalidateCache();
+                DeviceCoreM1_ForceDirectNextPoll();
+                PollAndUpdate(MODEL_COREM1);
             }
-            return TRUE;
-        } else {
-            if (s_nonUrxDeviceCount < MAX_CACHED_NON_URX_DEVICES) {
-                s_cachedNonUrxDevices[s_nonUrxDeviceCount++] = hDevice;
-            } else {
-                s_cachedNonUrxDevices[0] = hDevice;
-            }
-            return FALSE;
-        }
+#endif
+            break;
+
+        case IDM_DETAILS:
+#if defined(BUILD_TARGET_CORE75)
+            if (model == MODEL_CORE75) ClearDeviceToast(&s_nidCore75);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+            if (model == MODEL_COREM1) ClearDeviceToast(&s_nidCoreM1);
+#endif
+            ShowDetailsDialog(hWnd, model);
+            break;
+
+        case IDM_STYLE_RING_ONLY:
+            if (ds) ds->centerStyle = ICON_CENTER_RING_ONLY;
+            Settings_Save();
+            UpdateAllTrayIcons();
+            break;
+        case IDM_STYLE_PERCENT:
+            if (ds) ds->centerStyle = ICON_CENTER_PERCENT;
+            Settings_Save();
+            UpdateAllTrayIcons();
+            break;
+        case IDM_STYLE_GLYPH:
+            if (ds) ds->centerStyle = ICON_CENTER_GLYPH;
+            Settings_Save();
+            UpdateAllTrayIcons();
+            break;
+
+        case IDM_LOW_ENABLE:
+            if (ds) ds->lowBatteryAlert = !ds->lowBatteryAlert;
+            goto save_and_redraw;
+        case IDM_LOW_10:
+            if (ds) ds->lowAlertThreshold = 10;
+            goto save_and_redraw;
+        case IDM_LOW_15:
+            if (ds) ds->lowAlertThreshold = 15;
+            goto save_and_redraw;
+        case IDM_LOW_20:
+            if (ds) ds->lowAlertThreshold = 20;
+            goto save_and_redraw;
+
+        case IDM_LONG_ENABLE:
+            if (ds) ds->longevityAlert = !ds->longevityAlert;
+            goto save_and_redraw;
+        case IDM_LONG_80:
+            if (ds) ds->longevityAlertThreshold = 80;
+            goto save_and_redraw;
+        case IDM_LONG_85:
+            if (ds) ds->longevityAlertThreshold = 85;
+            goto save_and_redraw;
+
+        case IDM_FULL_ENABLE:
+            if (ds) ds->highBatteryAlert = !ds->highBatteryAlert;
+            goto save_and_redraw;
+        case IDM_FULL_95:
+            if (ds) ds->highAlertThreshold = 95;
+            goto save_and_redraw;
+        case IDM_FULL_100:
+            if (ds) ds->highAlertThreshold = 100;
+            goto save_and_redraw;
+
+        case IDM_AUTOSTART:
+            Settings_SetAutostart(!g_Settings.startWithWindows);
+            goto save_and_redraw;
+
+        save_and_redraw:
+            Settings_Save();
+            if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) InvalidateRect(s_hDetailsWnd, NULL, TRUE);
+            break;
+
+        case IDM_EXIT:
+            DestroyWindow(hWnd);
+            break;
     }
-    return FALSE; // Safe fallback: fail closed if query failed or device unverified
 }
 
+// -----------------------------------------------------------------------------
+// Window Procedure
+// -----------------------------------------------------------------------------
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == s_uTaskbarRestartMsg && s_uTaskbarRestartMsg != 0) {
-        // Explorer restarted: re-register icon with pre-existing valid icon
-        s_nid.hIcon = s_hCurrentIcon;
-        Shell_NotifyIconW(NIM_ADD, &s_nid);
-        UpdateTrayIcon();
+#if defined(BUILD_TARGET_CORE75)
+        s_nidCore75.hIcon = s_hCurrentIconCore75;
+        Shell_NotifyIconW(NIM_ADD, &s_nidCore75);
+        UpdateTrayIcon(MODEL_CORE75);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+        s_nidCoreM1.hIcon = s_hCurrentIconCoreM1;
+        Shell_NotifyIconW(NIM_ADD, &s_nidCoreM1);
+        UpdateTrayIcon(MODEL_COREM1);
+#endif
         return 0;
     }
 
     switch (msg) {
         case WM_CREATE: {
-            // Register for system-wide raw keyboard input (background sink)
-            RAWINPUTDEVICE rid;
-            rid.usUsagePage = 0x01; // HID_USAGE_PAGE_GENERIC
-            rid.usUsage = 0x06;     // HID_USAGE_GENERIC_KEYBOARD
-            rid.dwFlags = RIDEV_INPUTSINK;
-            rid.hwndTarget = hWnd;
-            RegisterRawInputDevices(&rid, 1, sizeof(RAWINPUTDEVICE));
-            s_lastKeyboardInputTick = 0;
-            s_lastRadioQueryTick = 0;
+            // Register Raw Input sinks
+            RAWINPUTDEVICE rid[2] = {0};
+            UINT ridCount = 0;
 
-            // Register for hotplug / device change notifications
+#if defined(BUILD_TARGET_CORE75)
+            rid[ridCount].usUsagePage = 0x01; // HID_USAGE_PAGE_GENERIC
+            rid[ridCount].usUsage     = 0x06; // KEYBOARD
+            rid[ridCount].dwFlags     = RIDEV_INPUTSINK;
+            rid[ridCount].hwndTarget  = hWnd;
+            ridCount++;
+            s_lastCore75InputTick = 0;
+            s_lastCore75RadioQueryTick = 0;
+#endif
+
+#if defined(BUILD_TARGET_COREM1)
+            rid[ridCount].usUsagePage = 0x01; // HID_USAGE_PAGE_GENERIC
+            rid[ridCount].usUsage     = 0x02; // MOUSE
+            rid[ridCount].dwFlags     = RIDEV_INPUTSINK;
+            rid[ridCount].hwndTarget  = hWnd;
+            ridCount++;
+            s_lastCoreM1InputTick = 0;
+            s_lastCoreM1RadioQueryTick = 0;
+#endif
+
+            if (ridCount > 0) {
+                RegisterRawInputDevices(rid, ridCount, sizeof(RAWINPUTDEVICE));
+            }
+
             DEV_BROADCAST_DEVICEINTERFACE_W filter = {0};
             filter.dbcc_size = sizeof(filter);
             filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
             s_hDevNotify = RegisterDeviceNotificationW(hWnd, &filter, DEVICE_NOTIFY_ALL_INTERFACE_CLASSES);
 
-            // Register for Session Lock / Unlock notifications
             if (s_pfnWTSRegisterSessionNotification) {
                 s_isWtsRegistered = s_pfnWTSRegisterSessionNotification(hWnd, NOTIFY_FOR_THIS_SESSION);
             }
 
-            // Register for Screen / Display Off / On state notifications
             if (s_pfnRegisterPowerSettingNotification) {
                 s_hPowerNotify = s_pfnRegisterPowerSettingNotification(hWnd, &GUID_CONSOLE_DISPLAY_STATE_M, DEVICE_NOTIFY_WINDOW_HANDLE);
             }
 
-            // Regular polling interval: every 60 seconds
-            SetTimer(hWnd, IDT_POLL_TIMER, 60000, NULL);
+#if defined(BUILD_TARGET_CORE75)
+            SetTimer(hWnd, IDT_POLL_TIMER_CORE75, 60000, NULL);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+            SetTimer(hWnd, IDT_POLL_TIMER_COREM1, 60000, NULL);
+#endif
             break;
         }
 
         case WM_INPUT: {
             HRAWINPUT hRaw = (HRAWINPUT)lParam;
-            RAWINPUT raw;
-            UINT dwSize = sizeof(RAWINPUT);
-            if (GetRawInputData(hRaw, RID_INPUT, &raw, &dwSize, sizeof(RAWINPUTHEADER)) != (UINT)-1) {
-                if (raw.header.dwType == RIM_TYPEKEYBOARD) {
-                    if (raw.data.keyboard.Message == WM_KEYDOWN || raw.data.keyboard.Message == WM_SYSKEYDOWN) {
-                        // Multi-keyboard isolation: only track input originating from the URX Core75
-                        if (IsURXKeyboardDevice(raw.header.hDevice)) {
-                            s_lastKeyboardInputTick = GetTickCount();
-                            if ((s_currentStatus.isSleeping || s_lastRadioQueryTick == 0) && s_currentStatus.mode == MODE_2P4G) {
-                                // Instantly wake up UI state to Active!
-                                s_currentStatus.isSleeping = FALSE;
-                                UpdateTrayIcon();
-                                if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
-                                    InvalidateRect(s_hDetailsWnd, NULL, TRUE);
-                                }
-                                // Physical keystroke confirms keyboard is awake: sync immediately (150ms)
-                                s_lastRadioQueryTick = 0;
-                                SetTimer(hWnd, IDT_POLL_TIMER, 150, NULL);
-                            }
-                        }
+#if defined(BUILD_TARGET_CORE75)
+            BOOL kbWake = FALSE;
+            if (DeviceCore75_HandleRawInput(hRaw, &kbWake)) {
+                s_lastCore75InputTick = GetTickCount();
+                if ((s_statusCore75.isSleeping || s_lastCore75RadioQueryTick == 0) && s_statusCore75.mode == MODE_2P4G) {
+                    s_statusCore75.isSleeping = FALSE;
+                    UpdateTrayIcon(MODEL_CORE75);
+                    if (s_hDetailsWnd && IsWindow(s_hDetailsWnd) && s_detailsTargetModel == MODEL_CORE75) {
+                        InvalidateRect(s_hDetailsWnd, NULL, TRUE);
                     }
+                    s_lastCore75RadioQueryTick = 0;
+                    SetTimer(hWnd, IDT_POLL_TIMER_CORE75, 150, NULL);
                 }
             }
+#endif
+#if defined(BUILD_TARGET_COREM1)
+            BOOL mouseWake = FALSE;
+            if (DeviceCoreM1_HandleRawInput(hRaw, s_statusCoreM1.isSleeping, &mouseWake)) {
+                s_lastCoreM1InputTick = GetTickCount();
+                if ((s_statusCoreM1.isSleeping || mouseWake || s_lastCoreM1RadioQueryTick == 0) && s_statusCoreM1.mode == MODE_2P4G) {
+                    s_statusCoreM1.isSleeping = FALSE;
+                    UpdateTrayIcon(MODEL_COREM1);
+                    if (s_hDetailsWnd && IsWindow(s_hDetailsWnd) && s_detailsTargetModel == MODEL_COREM1) {
+                        InvalidateRect(s_hDetailsWnd, NULL, TRUE);
+                    }
+                    s_lastCoreM1RadioQueryTick = 0;
+                    SetTimer(hWnd, IDT_POLL_TIMER_COREM1, 150, NULL);
+                }
+            }
+#endif
             return DefWindowProcW(hWnd, msg, wParam, lParam);
         }
 
         case WM_TIMER: {
-            if (wParam == IDT_POLL_TIMER) {
+            if (wParam == IDT_POLL_TIMER_CORE75 || wParam == IDT_POLL_TIMER_COREM1) {
+                DeviceModel model = (wParam == IDT_POLL_TIMER_COREM1) ? MODEL_COREM1 : MODEL_CORE75;
+                SetTimer(hWnd, (UINT_PTR)wParam, 60000, NULL);
                 s_isResumingFromSuspend = FALSE;
-                PollAndUpdate();
-            } else if (wParam == IDT_ANIM_TIMER) {
-                // Smooth breathing phase progression (2.5 second breath period at ~15 FPS)
-                s_breathPhase += 0.13f;
-                if (s_breathPhase > 2.0f * PI) {
-                    s_breathPhase -= 2.0f * PI;
+                PollAndUpdate(model);
+                if (s_hDetailsWnd && IsWindow(s_hDetailsWnd) && s_detailsTargetModel == model) {
+                    InvalidateRect(s_hDetailsWnd, NULL, TRUE);
                 }
-                UpdateTrayIcon();
-            } else if (wParam == IDT_CLICK_TIMER) {
-                KillTimer(hWnd, IDT_CLICK_TIMER);
-                // User performed a genuine single left-click: trigger quick refresh & status balloon
-                BatteryMonitor_ForceDirectNextPoll();
-                PollAndUpdate();
-
-                // Prevent notification spam from repeated clicks
+            } else if (wParam == IDT_CLICK_TIMER_CORE75 || wParam == IDT_CLICK_TIMER_COREM1) {
+                KillTimer(hWnd, (UINT_PTR)wParam);
+                DeviceModel model = (wParam == IDT_CLICK_TIMER_COREM1) ? MODEL_COREM1 : MODEL_CORE75;
+#if defined(BUILD_TARGET_CORE75)
+                if (model == MODEL_CORE75) DeviceCore75_ForceDirectNextPoll();
+#endif
+#if defined(BUILD_TARGET_COREM1)
+                if (model == MODEL_COREM1) DeviceCoreM1_ForceDirectNextPoll();
+#endif
+                PollAndUpdate(model);
                 DWORD now = GetTickCount();
-                if (now - s_lastManualToastTick >= TOAST_MANUAL_COOLDOWN_MS) {
-                    FormatRichTooltip(s_nid.szInfo, 255);
-                    ShowTrayToast(L"URX Core75 Status", s_nid.szInfo, NIIF_INFO);
+                DWORD *pLastToast = NULL;
+                NOTIFYICONDATAW *pToastNid = NULL;
+                DeviceStatus *pSt = NULL;
+                BatteryStatsContext *pStats = NULL;
+#if defined(BUILD_TARGET_CORE75)
+                if (model == MODEL_CORE75) {
+                    pLastToast = &s_lastCore75ManualToastTick;
+                    pToastNid = &s_nidCore75;
+                    pSt = &s_statusCore75;
+                    pStats = &s_statsCore75;
                 }
+#endif
+#if defined(BUILD_TARGET_COREM1)
+                if (model == MODEL_COREM1) {
+                    pLastToast = &s_lastCoreM1ManualToastTick;
+                    pToastNid = &s_nidCoreM1;
+                    pSt = &s_statusCoreM1;
+                    pStats = &s_statsCoreM1;
+                }
+#endif
+                if (pLastToast && (now - *pLastToast >= TOAST_MANUAL_COOLDOWN_MS)) {
+                    *pLastToast = now;
+                    if (pToastNid && pSt && pStats) {
+                        FormatDeviceTooltip(model, pSt, pStats, pToastNid->szInfo, 255);
+                        const WCHAR *toastTitle = (model == MODEL_COREM1) ? L"URX Core M1 Status" : L"URX Core75 Status";
+                        ShowDeviceToast(pToastNid, toastTitle, pToastNid->szInfo, NIIF_INFO);
+                    }
+                }
+            } else if (wParam == IDT_ANIM_TIMER) {
+                s_breathPhase += 0.13f;
+                if (s_breathPhase > 2.0f * PI) s_breathPhase -= 2.0f * PI;
+                UpdateAllTrayIcons();
             }
             break;
         }
 
         case WM_DEVICECHANGE: {
-            // Hardware connect/disconnect event occurred!
             if (wParam == DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
-                ClearDeviceCache();
-                s_lastRadioQueryTick = 0; // Fresh hardware connection: query immediately (Issue 2)
-                BatteryMonitor_InvalidateCache();
-                // Brief 150ms pause to let Windows PnP finish enumeration, then poll
-                SetTimer(hWnd, IDT_POLL_TIMER, 150, NULL);
+                ResetAllDevicesPowerState(hWnd);
+                RestartAllDeviceTimers(hWnd, 150);
             }
             break;
         }
 
         case WM_SETTINGCHANGE: {
-            // Windows theme changed (light/dark mode switch) or DPI change
-            if (s_pfnSetPreferredAppMode) {
-                s_pfnSetPreferredAppMode(APPMODE_ALLOWDARK);
-            }
-            if (s_pfnFlushMenuThemes) {
-                s_pfnFlushMenuThemes();
-            }
-            UpdateTrayIcon();
+            if (s_pfnSetPreferredAppMode) s_pfnSetPreferredAppMode(APPMODE_ALLOWDARK);
+            if (s_pfnFlushMenuThemes) s_pfnFlushMenuThemes();
+            UpdateAllTrayIcons();
             if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
                 BOOL isDark = IsAppInDarkMode();
                 ApplyWindowTheme(s_hDetailsWnd, isDark);
@@ -1230,48 +1522,25 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         case WM_POWERBROADCAST: {
             if (wParam == PBT_APMSUSPEND) {
-                // PC entering sleep: pause polling and invalidate cached device paths
                 s_isResumingFromSuspend = TRUE;
-                ClearDeviceCache();
-                KillTimer(hWnd, IDT_POLL_TIMER);
-                BatteryStats_ResetSessionBaseline();
-                BatteryMonitor_ResetBaseline();
-                BatteryMonitor_InvalidateCache();
+                ResetAllDevicesPowerState(hWnd);
             } else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND) {
-                // PC resumed from sleep:
-                // Passive USB presence check will immediately show clean last known battery in Asleep state
                 s_isResumingFromSuspend = TRUE;
-                ClearDeviceCache();
-                s_lastKeyboardInputTick = 0;
-                s_lastRadioQueryTick = 0; // Unqueried after resume: wake event or poll syncs true battery immediately (Issue 1)
-                s_currentStatus.isSleeping = TRUE;
-                BatteryStats_ResetSessionBaseline();
-                BatteryMonitor_ResetBaseline();
-                BatteryMonitor_InvalidateCache();
-                if (!s_isSessionLocked && !s_isDisplayOff) {
-                    SetTimer(hWnd, IDT_POLL_TIMER, 1500, NULL);
-                }
+                ResetAllDevicesPowerState(hWnd);
+                if (!s_isSessionLocked && !s_isDisplayOff) RestartAllDeviceTimers(hWnd, 1500);
             } else if (wParam == PBT_POWERSETTINGCHANGE && lParam) {
                 POWERBROADCAST_SETTING_M *pSetting = (POWERBROADCAST_SETTING_M*)lParam;
                 if (IsEqualGUID(&pSetting->PowerSetting, &GUID_CONSOLE_DISPLAY_STATE_M)) {
                     DWORD displayState = 0;
                     memcpy(&displayState, pSetting->Data, (pSetting->DataLength < sizeof(DWORD)) ? pSetting->DataLength : sizeof(DWORD));
                     if (displayState == 0) {
-                        // Display turned off: pause polling & radio queries
                         s_isDisplayOff = TRUE;
-                        KillTimer(hWnd, IDT_POLL_TIMER);
-                        BatteryMonitor_InvalidateCache();
+                        ResetAllDevicesPowerState(hWnd);
                     } else if (displayState == 1 || displayState == 2) {
-                        // Display powered back on or un-dimmed: resume polling
                         s_isDisplayOff = FALSE;
-                        if (!s_isSessionLocked) {
-                            s_lastKeyboardInputTick = 0;
-                            s_lastRadioQueryTick = 0; // Issue 1
-                            // If PC is resuming from actual sleep, preserve the USB stabilization window
-                            if (!s_isResumingFromSuspend) {
-                                BatteryMonitor_InvalidateCache();
-                                SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
-                            }
+                        if (!s_isSessionLocked && !s_isResumingFromSuspend) {
+                            ResetAllDevicesPowerState(hWnd);
+                            RestartAllDeviceTimers(hWnd, 500);
                         }
                     }
                 }
@@ -1281,116 +1550,55 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         case WM_WTSSESSION_CHANGE: {
             if (wParam == WTS_SESSION_LOCK) {
-                // Workstation locked: pause polling & radio queries
                 s_isSessionLocked = TRUE;
-                KillTimer(hWnd, IDT_POLL_TIMER);
-                BatteryMonitor_InvalidateCache();
+                ResetAllDevicesPowerState(hWnd);
             } else if (wParam == WTS_SESSION_UNLOCK) {
-                // Workstation unlocked: resume polling if display is also active
                 s_isSessionLocked = FALSE;
                 if (!s_isDisplayOff) {
-                    s_lastKeyboardInputTick = 0;
-                    s_lastRadioQueryTick = 0; // Issue 1
-                    BatteryMonitor_InvalidateCache();
-                    SetTimer(hWnd, IDT_POLL_TIMER, 500, NULL);
+                    ResetAllDevicesPowerState(hWnd);
+                    RestartAllDeviceTimers(hWnd, 500);
                 }
             }
             break;
         }
 
         case WM_TRAY_CALLBACK: {
+            UINT uID = (UINT)wParam;
+            DeviceModel targetModel = (uID == 1002) ? MODEL_COREM1 : MODEL_CORE75;
+
             if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU) {
-                KillTimer(hWnd, IDT_CLICK_TIMER);
-                ShowContextMenu(hWnd);
+#if defined(BUILD_TARGET_CORE75)
+                if (targetModel == MODEL_CORE75) KillTimer(hWnd, IDT_CLICK_TIMER_CORE75);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+                if (targetModel == MODEL_COREM1) KillTimer(hWnd, IDT_CLICK_TIMER_COREM1);
+#endif
+                ShowContextMenu(hWnd, targetModel);
             } else if (lParam == WM_LBUTTONDBLCLK) {
-                KillTimer(hWnd, IDT_CLICK_TIMER);
-                ClearTrayToast();
-                ShowDetailsDialog(hWnd);
+#if defined(BUILD_TARGET_CORE75)
+                if (targetModel == MODEL_CORE75) {
+                    KillTimer(hWnd, IDT_CLICK_TIMER_CORE75);
+                    ClearDeviceToast(&s_nidCore75);
+                }
+#endif
+#if defined(BUILD_TARGET_COREM1)
+                if (targetModel == MODEL_COREM1) {
+                    KillTimer(hWnd, IDT_CLICK_TIMER_COREM1);
+                    ClearDeviceToast(&s_nidCoreM1);
+                }
+#endif
+                ShowDetailsDialog(hWnd, targetModel);
             } else if (lParam == WM_LBUTTONUP) {
-                // Defer single-click to avoid collision with double-click
                 UINT dblClickTime = GetDoubleClickTime();
                 if (dblClickTime < 180) dblClickTime = 180;
                 if (dblClickTime > 400) dblClickTime = 400;
-                SetTimer(hWnd, IDT_CLICK_TIMER, dblClickTime, NULL);
-            }
-            break;
-        }
 
-        case WM_COMMAND: {
-            int wmId = LOWORD(wParam);
-            switch (wmId) {
-                case IDM_REFRESH:
-                    s_lastRadioQueryTick = 0;
-                    ClearDeviceCache();
-                    BatteryMonitor_InvalidateCache();
-                    BatteryMonitor_ForceDirectNextPoll();
-                    PollAndUpdate();
-                    break;
-                case IDM_DETAILS:
-                    ClearTrayToast();
-                    ShowDetailsDialog(hWnd);
-                    break;
-                case IDM_STYLE_RING_ONLY:
-                    g_Settings.centerStyle = ICON_CENTER_RING_ONLY;
-                    Settings_Save();
-                    UpdateTrayIcon();
-                    break;
-                case IDM_STYLE_PERCENT:
-                    g_Settings.centerStyle = ICON_CENTER_PERCENT;
-                    Settings_Save();
-                    UpdateTrayIcon();
-                    break;
-                case IDM_STYLE_KEYBOARD:
-                    g_Settings.centerStyle = ICON_CENTER_KEYBOARD;
-                    Settings_Save();
-                    UpdateTrayIcon();
-                    break;
-
-                case IDM_LOW_ENABLE:
-                    g_Settings.lowBatteryAlert = !g_Settings.lowBatteryAlert;
-                    goto save_and_invalidate;
-                case IDM_LOW_10:
-                    g_Settings.lowAlertThreshold = 10;
-                    goto save_and_invalidate;
-                case IDM_LOW_15:
-                    g_Settings.lowAlertThreshold = 15;
-                    goto save_and_invalidate;
-                case IDM_LOW_20:
-                    g_Settings.lowAlertThreshold = 20;
-                    goto save_and_invalidate;
-
-                case IDM_LONG_ENABLE:
-                    g_Settings.longevityAlert = !g_Settings.longevityAlert;
-                    goto save_and_invalidate;
-                case IDM_LONG_80:
-                    g_Settings.longevityAlertThreshold = 80;
-                    goto save_and_invalidate;
-                case IDM_LONG_85:
-                    g_Settings.longevityAlertThreshold = 85;
-                    goto save_and_invalidate;
-
-                case IDM_FULL_ENABLE:
-                    g_Settings.highBatteryAlert = !g_Settings.highBatteryAlert;
-                    goto save_and_invalidate;
-                case IDM_FULL_95:
-                    g_Settings.highAlertThreshold = 95;
-                    goto save_and_invalidate;
-                case IDM_FULL_100:
-                    g_Settings.highAlertThreshold = 100;
-                    goto save_and_invalidate;
-
-                case IDM_AUTOSTART:
-                    Settings_SetAutostart(!g_Settings.startWithWindows);
-                    goto save_and_invalidate;
-
-                save_and_invalidate:
-                    Settings_Save();
-                    if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) InvalidateRect(s_hDetailsWnd, NULL, TRUE);
-                    break;
-
-                case IDM_EXIT:
-                    DestroyWindow(hWnd);
-                    break;
+#if defined(BUILD_TARGET_CORE75)
+                if (targetModel == MODEL_CORE75) SetTimer(hWnd, IDT_CLICK_TIMER_CORE75, dblClickTime, NULL);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+                if (targetModel == MODEL_COREM1) SetTimer(hWnd, IDT_CLICK_TIMER_COREM1, dblClickTime, NULL);
+#endif
             }
             break;
         }
@@ -1408,25 +1616,37 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 s_pfnWTSUnRegisterSessionNotification(hWnd);
                 s_isWtsRegistered = FALSE;
             }
-            KillTimer(hWnd, IDT_POLL_TIMER);
+#if defined(BUILD_TARGET_CORE75)
+            KillTimer(hWnd, IDT_POLL_TIMER_CORE75);
+            KillTimer(hWnd, IDT_CLICK_TIMER_CORE75);
+#endif
+#if defined(BUILD_TARGET_COREM1)
+            KillTimer(hWnd, IDT_POLL_TIMER_COREM1);
+            KillTimer(hWnd, IDT_CLICK_TIMER_COREM1);
+#endif
             KillTimer(hWnd, IDT_ANIM_TIMER);
-            KillTimer(hWnd, IDT_CLICK_TIMER);
 
             if (s_hDetailsWnd && IsWindow(s_hDetailsWnd)) {
                 DestroyWindow(s_hDetailsWnd);
                 s_hDetailsWnd = NULL;
             }
 
-            ClearTrayToast();
-            // Remove tray icon
-            Shell_NotifyIconW(NIM_DELETE, &s_nid);
-            if (s_hCurrentIcon) {
-                DestroyIcon(s_hCurrentIcon);
-                s_hCurrentIcon = NULL;
-            }
+#if defined(BUILD_TARGET_CORE75)
+            ClearDeviceToast(&s_nidCore75);
+            Shell_NotifyIconW(NIM_DELETE, &s_nidCore75);
+            if (s_hCurrentIconCore75) DestroyIcon(s_hCurrentIconCore75);
+            BatteryStats_Save(&s_statsCore75);
+            DeviceCore75_Cleanup();
+#endif
+#if defined(BUILD_TARGET_COREM1)
+            ClearDeviceToast(&s_nidCoreM1);
+            Shell_NotifyIconW(NIM_DELETE, &s_nidCoreM1);
+            if (s_hCurrentIconCoreM1) DestroyIcon(s_hCurrentIconCoreM1);
+            BatteryStats_Save(&s_statsCoreM1);
+            DeviceCoreM1_Cleanup();
+#endif
 
-            BatteryStats_Save();
-            BatteryMonitor_Cleanup();
+            HidCommon_Cleanup();
             PostQuitMessage(0);
             break;
         }
@@ -1442,50 +1662,48 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     (void)lpCmdLine;
     (void)nCmdShow;
 
-    // 1. Ensure thread is bound to user's interactive "Default" desktop (cleanly closing handle)
-    HDESK hDesk = OpenDesktopA("Default", 0, FALSE, GENERIC_ALL);
-    if (hDesk) {
-        SetThreadDesktop(hDesk);
-        CloseDesktop(hDesk);
-    }
-
-    // Initialize System-Adaptive Dark Mode for Win32 menus
     InitDarkMode();
-
-    // Initialize Session Lock and Screen Off power hooks
     InitPowerAndSessionHooks();
 
-    // Set Process AppUserModelID for modern Windows Action Center toasts
     if (s_pfnSetCurrentProcessExplicitAppUserModelID) {
         s_pfnSetCurrentProcessExplicitAppUserModelID(L"CoreMonitor");
     }
 
-    // 2. Single Instance Guard (Wake existing instance to front)
+    // Single Instance Guard
     HANDLE hMutex = CreateMutexW(NULL, TRUE, MUTEX_NAME);
     if (!hMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
         HWND hExistingWnd = FindWindowW(CLASS_NAME, L"Core Monitor");
         if (hExistingWnd) {
-            PostMessageW(hExistingWnd, WM_COMMAND, IDM_DETAILS, 0);
+            WPARAM targetId = 1001;
+#if defined(BUILD_TARGET_COREM1) && !defined(BUILD_TARGET_CORE75)
+            targetId = 1002;
+#endif
+            PostMessageW(hExistingWnd, WM_TRAY_CALLBACK, targetId, WM_LBUTTONDBLCLK);
         }
         if (hMutex) CloseHandle(hMutex);
-        return 0; // Instance already running
+        return 0;
     }
 
-    // 3. Register Explorer Taskbar Restart Message
     s_uTaskbarRestartMsg = RegisterWindowMessageW(L"TaskbarCreated");
 
-    // 4. Load User Preferences and Battery Statistics
     Settings_Load();
-    BatteryStats_Init();
 
-    // 5. Initialize Hardware Subsystems
-    if (!BatteryMonitor_Init()) {
+    if (!HidCommon_Init()) {
         MessageBoxW(NULL, L"Failed to initialize Windows HID subsystems.", L"Core Monitor Error", MB_ICONERROR);
         CloseHandle(hMutex);
         return 1;
     }
 
-    // 6. Register Hidden Message Window Class
+#if defined(BUILD_TARGET_CORE75)
+    DeviceCore75_Init();
+    BatteryStats_Init(&s_statsCore75, L"Software\\CoreMonitor\\Stats\\Core75", L"Software\\CoreMonitor\\Stats", 0.50, 35.0);
+#endif
+
+#if defined(BUILD_TARGET_COREM1)
+    DeviceCoreM1_Init();
+    BatteryStats_Init(&s_statsCoreM1, L"Software\\CoreMonitor\\Stats\\CoreM1", NULL, 1.50, 50.0);
+#endif
+
     WNDCLASSEXW wc = {0};
     wc.cbSize = sizeof(WNDCLASSEXW);
     wc.lpfnWndProc = WndProc;
@@ -1497,7 +1715,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 1;
     }
 
-    // 7. Create Hidden Top-Level Window (WS_POPUP, invisible)
     s_hWnd = CreateWindowExW(0, CLASS_NAME, L"Core Monitor", WS_POPUP, 0, 0, 0, 0,
                              NULL, NULL, hInstance, NULL);
     if (!s_hWnd) {
@@ -1509,22 +1726,32 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         s_pfnAllowDarkModeForWindow(s_hWnd, TRUE);
     }
 
-    // 8. Setup Taskbar Notification Icon
-    s_nid.cbSize = sizeof(NOTIFYICONDATAW);
-    s_nid.hWnd = s_hWnd;
-    s_nid.uID = 1001;
-    s_nid.uFlags = NIF_MESSAGE | NIF_TIP | NIF_ICON;
-    s_nid.uCallbackMessage = WM_TRAY_CALLBACK;
-    wcsncpy(s_nid.szTip, L"Core Monitor", 127);
+#if defined(BUILD_TARGET_CORE75)
+    s_nidCore75.cbSize = sizeof(NOTIFYICONDATAW);
+    s_nidCore75.hWnd = s_hWnd;
+    s_nidCore75.uID = 1001;
+    s_nidCore75.uFlags = NIF_MESSAGE | NIF_TIP | NIF_ICON;
+    s_nidCore75.uCallbackMessage = WM_TRAY_CALLBACK;
+    wcsncpy(s_nidCore75.szTip, L"URX Core75", 127);
 
-    // Initial Hardware Poll
-    PollAndUpdate();
+    PollAndUpdate(MODEL_CORE75);
+    Shell_NotifyIconW(NIM_ADD, &s_nidCore75);
+    UpdateTrayIcon(MODEL_CORE75);
+#endif
 
-    // Register notification icon with taskbar
-    Shell_NotifyIconW(NIM_ADD, &s_nid);
-    UpdateTrayIcon();
+#if defined(BUILD_TARGET_COREM1)
+    s_nidCoreM1.cbSize = sizeof(NOTIFYICONDATAW);
+    s_nidCoreM1.hWnd = s_hWnd;
+    s_nidCoreM1.uID = 1002;
+    s_nidCoreM1.uFlags = NIF_MESSAGE | NIF_TIP | NIF_ICON;
+    s_nidCoreM1.uCallbackMessage = WM_TRAY_CALLBACK;
+    wcsncpy(s_nidCoreM1.szTip, L"URX Core M1", 127);
 
-    // 9. Message Loop
+    PollAndUpdate(MODEL_COREM1);
+    Shell_NotifyIconW(NIM_ADD, &s_nidCoreM1);
+    UpdateTrayIcon(MODEL_COREM1);
+#endif
+
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);

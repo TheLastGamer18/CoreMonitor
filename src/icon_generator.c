@@ -20,7 +20,8 @@ static const unsigned char DIGIT_FONT_3X7[10][7] = {
     { 0x7, 0x5, 0x5, 0x7, 0x1, 0x1, 0x7 }  // 9: distinct top bowl, clean bottom closure
 };
 
-// Contour-proportioned 75% Mechanical Keyboard glyph (10x7, rows 4..10, cols 3..12)
+// Contour-proportioned Core75 75% Mechanical Keyboard glyph (10x7, rows 4..10, cols 3..12)
+#if defined(BUILD_TARGET_CORE75) || (!defined(BUILD_TARGET_COREM1))
 static const unsigned short KEYBOARD_BITS[7] = {
     0x1FE, // 0111111110
     0x36D, // 1101101101
@@ -30,6 +31,20 @@ static const unsigned short KEYBOARD_BITS[7] = {
     0x2FD, // 1011111101
     0x1FE  // 0111111110
 };
+#endif
+
+// Stadium-capsule CoreM1 Mouse glyph with floating scroll wheel (10x7, rows 4..10, cols 3..12)
+#if defined(BUILD_TARGET_COREM1) || (!defined(BUILD_TARGET_CORE75))
+static const unsigned short MOUSE_BITS[7] = {
+    0x078, // 0001111000: smooth rounded top capsule dome
+    0x084, // 0010000100: left/right click buttons with open chamber
+    0x0B4, // 0010110100: outer body shell with centered vertical scroll wheel
+    0x0B4, // 0010110100: outer body shell with centered vertical scroll wheel
+    0x084, // 0010000100: outer body shell with open palm hollow
+    0x084, // 0010000100: outer body shell with open palm hollow
+    0x078  // 0001111000: smooth rounded bottom capsule heel
+};
+#endif
 
 // Energetic charging lightning bolt overlay (5x7, rows 4..10, cols 5..9)
 static const unsigned char LIGHTNING_BITS[7] = {
@@ -122,6 +137,7 @@ HICON IconGen_CreateBatteryIcon(
     BOOL isSleeping,
     BOOL isDisconnected,
     CenterIconStyle centerStyle,
+    DeviceModel model,
     BOOL lightTaskbar
 ) {
     int size = IconGen_GetTargetIconSize();
@@ -183,14 +199,9 @@ HICON IconGen_CreateBatteryIcon(
     }
 
     // Normalized geometry setup:
-    // Center at (0.0, 0.0), extent [-1.0, 1.0]
     float halfSize = (float)size * 0.5f;
     float pxStep = 1.0f / halfSize;
 
-    // Ring proportions:
-    // Normal mode: Thickness = 0.23, Radius = 0.885 (leaves ~12.3px center clearance for glyph/number)
-    // Ring-Only mode: Thickness = 0.34, Radius = 0.83 (expands ring width ~48% inward into empty center)
-    // Both modes share an exact 1.0 outer radius to maximize canvas utilization without clipping
     float ringThickness = (centerStyle == ICON_CENTER_RING_ONLY) ? 0.34f : 0.23f;
     float halfThickness = ringThickness * 0.5f;
     float ringRadius = 1.0f - halfThickness;
@@ -204,7 +215,7 @@ HICON IconGen_CreateBatteryIcon(
     float capEndX = ringRadius * sinf(maxAngle);
     float capEndY = -ringRadius * cosf(maxAngle);
 
-    // 1. RENDER CIRCLE INDICATOR RING (Seamless Active Arc Overlaid on Baseline Track)
+    // 1. RENDER CIRCLE INDICATOR RING
     for (int y = 0; y < size; y++) {
         for (int x = 0; x < size; x++) {
             float u = ((float)x + 0.5f - halfSize) / halfSize;
@@ -243,7 +254,6 @@ HICON IconGen_CreateBatteryIcon(
                 }
             }
 
-            // Layer active arc cleanly over the full continuous baseline track
             float tAlpha = ringCoverage * trackAlpha;
             float aAlpha = 0.0f;
             if (inArc) {
@@ -272,9 +282,8 @@ HICON IconGen_CreateBatteryIcon(
         float centerAlpha = isDisconnected ? 0.35f : (isSleeping ? 0.45f : 1.0f);
 
         if (centerStyle == ICON_CENTER_PERCENT && effPercent >= 0 && !isDisconnected) {
-            // High-contrast, maximum-legibility numeric percentage (rows 4..10, 7 rows tall)
+            // High-contrast, maximum-legibility numeric percentage
             if (effPercent < 10) {
-                // Single digit: centered at cols 6..8, rows 4..10
                 for (int row = 0; row < 7; row++) {
                     unsigned char bits = DIGIT_FONT_3X7[effPercent][row];
                     for (int col = 0; col < 3; col++) {
@@ -284,7 +293,6 @@ HICON IconGen_CreateBatteryIcon(
                     }
                 }
             } else if (effPercent < 100) {
-                // Two digits: d1 at cols 4..6, d2 at cols 9..11 (2px gap, perfectly centered span 4..11), rows 4..10
                 int d1 = effPercent / 10;
                 int d2 = effPercent % 10;
                 for (int row = 0; row < 7; row++) {
@@ -300,7 +308,6 @@ HICON IconGen_CreateBatteryIcon(
                     }
                 }
             } else {
-                // 100%: '1' spine at col 4 (serif at col 3), '0' at cols 6..8, '0' at cols 10..12, rows 4..10 (span 3..12)
                 for (int row = 0; row < 7; row++) {
                     DrawGridCell(pixels, size, 4, 4 + row, fgR, fgG, fgB, centerAlpha);
                     if (row == 0 || row == 1 || row == 6) {
@@ -317,9 +324,16 @@ HICON IconGen_CreateBatteryIcon(
                 }
             }
         } else {
-            // Contour-proportioned 75% Mechanical Keyboard Glyph (10x7, rows 4..10, cols 3..12)
+            // Model Glyph (Core75 Keyboard or CoreM1 Mouse)
+#if defined(BUILD_TARGET_CORE75) && defined(BUILD_TARGET_COREM1)
+            const unsigned short *glyphBits = (model == MODEL_COREM1) ? MOUSE_BITS : KEYBOARD_BITS;
+#elif defined(BUILD_TARGET_COREM1)
+            const unsigned short *glyphBits = MOUSE_BITS;
+#else
+            const unsigned short *glyphBits = KEYBOARD_BITS;
+#endif
             for (int r = 0; r < 7; r++) {
-                unsigned short bits = KEYBOARD_BITS[r];
+                unsigned short bits = glyphBits[r];
                 for (int c = 0; c < 10; c++) {
                     if (bits & (1 << (9 - c))) {
                         DrawGridCell(pixels, size, 3 + c, 4 + r, fgR, fgG, fgB, centerAlpha);

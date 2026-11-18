@@ -10,7 +10,6 @@ extern "C" {
 
 typedef struct {
     CenterIconStyle centerStyle;
-    BOOL startWithWindows;
     BOOL lowBatteryAlert;              // Low battery alert enabled
     int lowAlertThreshold;             // 10, 15, or 20 (default 20)
     BOOL longevityAlert;               // Longevity battery alert enabled
@@ -20,6 +19,16 @@ typedef struct {
     BOOL lowAlertShownForDischarge;    // Prevents repeating low battery notifications
     BOOL longevityAlertShownForCharge; // Prevents repeating longevity battery notifications
     BOOL highAlertShownForCharge;      // Prevents repeating high battery notifications
+} DeviceSettings;
+
+typedef struct {
+    BOOL startWithWindows;
+#if defined(BUILD_TARGET_CORE75) || (!defined(BUILD_TARGET_COREM1))
+    DeviceSettings core75;
+#endif
+#if defined(BUILD_TARGET_COREM1) || (!defined(BUILD_TARGET_CORE75))
+    DeviceSettings corem1;
+#endif
 } AppSettings;
 
 extern AppSettings g_Settings;
