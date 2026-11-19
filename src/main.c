@@ -253,31 +253,20 @@ static void FormatDeviceTooltip(DeviceModel model, const DeviceStatus *st, const
         estBuf, 64
     );
 
-    WCHAR modeExtra[64] = {0};
-    if (st->mode != MODE_DISCONNECTED && model == MODEL_COREM1) {
-        if (st->dpiValue > 0 && st->pollingRateHz > 0) {
-            _snwprintf(modeExtra, 64, L" \x2022 %d DPI \x2022 %dHz", st->dpiValue, st->pollingRateHz);
-        } else if (st->dpiValue > 0) {
-            _snwprintf(modeExtra, 64, L" \x2022 %d DPI", st->dpiValue);
-        } else if (st->pollingRateHz > 0) {
-            _snwprintf(modeExtra, 64, L" \x2022 %dHz", st->pollingRateHz);
-        }
-    }
-
     if (st->mode == MODE_DISCONNECTED) {
         _snwprintf(outTip, maxLen, L"%s: Disconnected", modelName);
     } else if (st->isSleeping) {
         if (effPercent < 0) {
-            _snwprintf(outTip, maxLen, L"%s: Asleep (Wake device) - [2.4GHz%s]\nOffline", modelName, modeExtra);
+            _snwprintf(outTip, maxLen, L"%s: Asleep (Wake device) - [2.4GHz]\nOffline", modelName);
         } else {
-            _snwprintf(outTip, maxLen, L"%s: %d%% - [Asleep - 2.4GHz%s]\n%s", modelName, effPercent, modeExtra, estBuf);
+            _snwprintf(outTip, maxLen, L"%s: %d%% - [Asleep - 2.4GHz]\n%s", modelName, effPercent, estBuf);
         }
     } else if (effPercent < 0) {
-        _snwprintf(outTip, maxLen, L"%s: Connecting... - [%s%s]\n%s", modelName, st->modeName, modeExtra, estBuf);
+        _snwprintf(outTip, maxLen, L"%s: Connecting... - [%s]\n%s", modelName, st->modeName, estBuf);
     } else if (st->isCharging) {
-        _snwprintf(outTip, maxLen, L"%s: %d%% - [%s - Charging%s]\n%s", modelName, effPercent, st->modeName, modeExtra, estBuf);
+        _snwprintf(outTip, maxLen, L"%s: %d%% - [%s - Charging]\n%s", modelName, effPercent, st->modeName, estBuf);
     } else {
-        _snwprintf(outTip, maxLen, L"%s: %d%% - [%s%s]\n%s", modelName, effPercent, st->modeName, modeExtra, estBuf);
+        _snwprintf(outTip, maxLen, L"%s: %d%% - [%s]\n%s", modelName, effPercent, st->modeName, estBuf);
     }
     outTip[maxLen - 1] = L'\0';
 }
@@ -589,7 +578,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             const BatteryStatsContext *stats = NULL;
             const DeviceSettings *ds = NULL;
             const WCHAR *titleStr = L"URX Peripheral";
-            const WCHAR *subTitleStr = L"Device Telemetry \x2022 v2.0.0";
+            const WCHAR *subTitleStr = L"Device Telemetry \x2022 v2.0.1";
             BOOL isFiltering = FALSE;
 
 #if defined(BUILD_TARGET_CORE75)
@@ -598,7 +587,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
                 stats = &s_statsCore75;
                 ds = &g_Settings.core75;
                 titleStr = L"URX Core75";
-                subTitleStr = L"Mechanical Keyboard Telemetry \x2022 v2.0.0";
+                subTitleStr = L"Mechanical Keyboard Telemetry \x2022 v2.0.1";
                 isFiltering = DeviceCore75_IsFilteringTransient();
             }
 #endif
@@ -608,7 +597,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
                 stats = &s_statsCoreM1;
                 ds = &g_Settings.corem1;
                 titleStr = L"URX Core M1";
-                subTitleStr = L"Wireless Gaming Mouse Telemetry \x2022 v2.0.0";
+                subTitleStr = L"Wireless Gaming Mouse Telemetry \x2022 v2.0.1";
                 isFiltering = DeviceCoreM1_IsFilteringTransient();
             }
 #endif
@@ -711,7 +700,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             _snwprintf(cRateStr, 32, L"~%.1f%% / hour", cRate);
 
             // Card 1: BATTERY & RUNTIME
-            int card1H = (s_detailsTargetModel == MODEL_COREM1) ? SC(130) : SC(92);
+            int card1H = (s_detailsTargetModel == MODEL_COREM1) ? SC(111) : SC(92);
             DrawCardPanel(memDC, pad, curY, cardW, card1H, colCardBg, colBorder, SC(8));
             SelectObject(memDC, s_hFontSecHdr);
             SetTextColor(memDC, colHeader);
@@ -732,19 +721,12 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
             if (s_detailsTargetModel == MODEL_COREM1) {
                 WCHAR telemRow4[64] = {0};
-                WCHAR telemRow5[64] = {0};
-                if (st && st->dpiValue > 0) {
-                    _snwprintf(telemRow4, 64, L"%d DPI", st->dpiValue);
-                } else {
-                    wcscpy(telemRow4, L"Unknown");
-                }
                 if (st && st->pollingRateHz > 0) {
-                    _snwprintf(telemRow5, 64, L"%d Hz", st->pollingRateHz);
+                    _snwprintf(telemRow4, 64, L"%d Hz", st->pollingRateHz);
                 } else {
-                    wcscpy(telemRow5, (st && st->mode != MODE_DISCONNECTED) ? L"Measuring..." : L"Offline");
+                    wcscpy(telemRow4, (st && st->mode != MODE_DISCONNECTED) ? L"Measuring..." : L"Offline");
                 }
-                DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Sensor DPI", telemRow4, colTextSec, colTextPri, s_hFontRow);
-                DrawCardRow(memDC, innerX, innerY + (rowH * 4), innerW, rowH, L"Polling Rate", telemRow5, colTextSec, colTextPri, s_hFontRow);
+                DrawCardRow(memDC, innerX, innerY + (rowH * 3), innerW, rowH, L"Polling Rate", telemRow4, colTextSec, colTextPri, s_hFontRow);
             }
 
             curY += card1H + SC(10);
@@ -906,7 +888,7 @@ static void ShowDetailsDialog(HWND hWnd, DeviceModel model) {
     if (dpi <= 0) dpi = 96;
 
     int clientW = MulDiv(400, dpi, 96);
-    int clientH = MulDiv((model == MODEL_COREM1) ? 470 : 432, dpi, 96);
+    int clientH = MulDiv((model == MODEL_COREM1) ? 451 : 432, dpi, 96);
 
     RECT rc = { 0, 0, clientW, clientH };
     AdjustWindowRectEx(&rc, WS_CAPTION | WS_SYSMENU, FALSE, 0);
@@ -1138,31 +1120,20 @@ static void ShowContextMenu(HWND hWnd, DeviceModel model) {
     int effPercent = (st && st->batteryPercent >= 0) ? st->batteryPercent : (st ? st->lastKnownPercent : -1);
     const WCHAR *modeName = st ? st->modeName : L"Disconnected";
 
-    WCHAR modeExtra[64] = {0};
-    if (st && st->mode != MODE_DISCONNECTED && model == MODEL_COREM1) {
-        if (st->dpiValue > 0 && st->pollingRateHz > 0) {
-            _snwprintf(modeExtra, 64, L" \x2022 %d DPI \x2022 %dHz", st->dpiValue, st->pollingRateHz);
-        } else if (st->dpiValue > 0) {
-            _snwprintf(modeExtra, 64, L" \x2022 %d DPI", st->dpiValue);
-        } else if (st->pollingRateHz > 0) {
-            _snwprintf(modeExtra, 64, L" \x2022 %dHz", st->pollingRateHz);
-        }
-    }
-
     if (!st || st->mode == MODE_DISCONNECTED) {
         _snwprintf(statusLine, 128, L"Status: Disconnected");
     } else if (st->isSleeping) {
         if (effPercent < 0) {
-            _snwprintf(statusLine, 128, L"Status: Asleep (Wake device) - [2.4GHz%s]", modeExtra);
+            _snwprintf(statusLine, 128, L"Status: Asleep (Wake device) - [2.4GHz]");
         } else {
-            _snwprintf(statusLine, 128, L"Status: %d%% - [Asleep - 2.4GHz%s]", effPercent, modeExtra);
+            _snwprintf(statusLine, 128, L"Status: %d%% - [Asleep - 2.4GHz]", effPercent);
         }
     } else if (effPercent < 0) {
-        _snwprintf(statusLine, 128, L"Status: Connecting... - [%s%s]", modeName, modeExtra);
+        _snwprintf(statusLine, 128, L"Status: Connecting... - [%s]", modeName);
     } else if (st->isCharging) {
-        _snwprintf(statusLine, 128, L"Status: %d%% - [%s - Charging%s]", effPercent, modeName, modeExtra);
+        _snwprintf(statusLine, 128, L"Status: %d%% - [%s - Charging]", effPercent, modeName);
     } else {
-        _snwprintf(statusLine, 128, L"Status: %d%% - [%s%s]", effPercent, modeName, modeExtra);
+        _snwprintf(statusLine, 128, L"Status: %d%% - [%s]", effPercent, modeName);
     }
     statusLine[127] = L'\0';
     AppendMenuW(hMenu, MF_STRING | MF_GRAYED, IDM_STATUS_INFO, statusLine);

@@ -18,22 +18,19 @@ static DeviceHandleCache s_handleCache = {0};
 static const char *s_coreM1Pids[] = { "5045", "5043", "503c" };
 
 static DWORD s_lastThrottledInputTick = 0;
-static int s_lastKnownDpi = 800;
 static int s_lastKnownRateHz = 1000;
 
-// Live packet timing to measure polling rate across all modes
-static DWORD s_lastMotionTick = 0;
-static int s_motionIntervalSum = 0;
+// One-shot passive packet timing using QPC to measure polling rate on boot/wake/refresh
+static BOOL s_measureRateNeeded = TRUE;
+static LARGE_INTEGER s_qpcFreq = {0};
+static LARGE_INTEGER s_lastMotionQpc = {0};
+static double s_motionDeltaSumMs = 0.0;
 static int s_motionSampleCount = 0;
 
 static void LoadPersistedTelemetry(void) {
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_COREM1_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         DWORD val = 0, size = sizeof(val);
-        if (RegQueryValueExW(hKey, L"LastKnownDpi", NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
-            if (val >= 50 && val <= 32000) s_lastKnownDpi = (int)val;
-        }
-        size = sizeof(val);
         if (RegQueryValueExW(hKey, L"LastKnownRateHz", NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
             if (val >= 125 && val <= 8000) s_lastKnownRateHz = (int)val;
         }
@@ -44,9 +41,7 @@ static void LoadPersistedTelemetry(void) {
 static void SavePersistedTelemetry(void) {
     HKEY hKey;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, REG_COREM1_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-        DWORD val = (DWORD)s_lastKnownDpi;
-        RegSetValueExW(hKey, L"LastKnownDpi", 0, REG_DWORD, (const BYTE*)&val, sizeof(DWORD));
-        val = (DWORD)s_lastKnownRateHz;
+        DWORD val = (DWORD)s_lastKnownRateHz;
         RegSetValueExW(hKey, L"LastKnownRateHz", 0, REG_DWORD, (const BYTE*)&val, sizeof(DWORD));
         RegCloseKey(hKey);
     }
@@ -57,8 +52,10 @@ void DeviceCoreM1_Init(void) {
     HidCommon_ClearHandleCache(&s_handleCache);
     LoadPersistedTelemetry();
     s_lastThrottledInputTick = 0;
-    s_lastMotionTick = 0;
-    s_motionIntervalSum = 0;
+    QueryPerformanceFrequency(&s_qpcFreq);
+    s_measureRateNeeded = TRUE;
+    s_lastMotionQpc.QuadPart = 0;
+    s_motionDeltaSumMs = 0.0;
     s_motionSampleCount = 0;
 }
 
@@ -67,6 +64,10 @@ void DeviceCoreM1_InvalidateCache(void) {
     s_cached2P4GPath[0] = '\0';
     HidCommon_ResetFilter(&s_filter);
     HidCommon_ClearHandleCache(&s_handleCache);
+    s_measureRateNeeded = TRUE;
+    s_lastMotionQpc.QuadPart = 0;
+    s_motionDeltaSumMs = 0.0;
+    s_motionSampleCount = 0;
 }
 
 BOOL DeviceCoreM1_IsFilteringTransient(void) {
@@ -75,6 +76,10 @@ BOOL DeviceCoreM1_IsFilteringTransient(void) {
 
 void DeviceCoreM1_ForceDirectNextPoll(void) {
     s_filter.forceDirectReading = TRUE;
+    s_measureRateNeeded = TRUE;
+    s_lastMotionQpc.QuadPart = 0;
+    s_motionDeltaSumMs = 0.0;
+    s_motionSampleCount = 0;
 }
 
 void DeviceCoreM1_ResetBaseline(void) {
@@ -86,20 +91,18 @@ BOOL DeviceCoreM1_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
     memset(outStatus, 0, sizeof(DeviceStatus));
     outStatus->batteryPercent = -1;
     outStatus->lastKnownPercent = s_filter.lastKnownBattery;
-    outStatus->dpiValue = s_lastKnownDpi;
     outStatus->pollingRateHz = s_lastKnownRateHz;
 
     // 1. Priority 1: Check Wired Mode (VID 0x3151, PID 0x5043)
     int wiredBatt = -1;
     BOOL wiredFound = FALSE;
-    int liveDpi = 0;
     int liveRate = 0;
 
     if (s_cachedWiredPath[0] != '\0') {
         if (HidCommon_TestDevicePresence(s_cachedWiredPath)) {
             wiredFound = TRUE;
             BOOL dummyChg = FALSE, dummySleep = FALSE;
-            wiredBatt = HidCommon_QueryCoreM1Battery(s_cachedWiredPath, TRUE, &dummyChg, &dummySleep, &liveDpi, &liveRate);
+            wiredBatt = HidCommon_QueryCoreM1Battery(s_cachedWiredPath, TRUE, &dummyChg, &dummySleep, &liveRate);
         } else {
             s_cachedWiredPath[0] = '\0';
         }
@@ -109,14 +112,15 @@ BOOL DeviceCoreM1_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
         wiredFound = HidCommon_ScanDevice(COREM1_VID, COREM1_PID_WIRED, 0, 0, s_cachedWiredPath, sizeof(s_cachedWiredPath));
         if (wiredFound) {
             BOOL dummyChg = FALSE, dummySleep = FALSE;
-            wiredBatt = HidCommon_QueryCoreM1Battery(s_cachedWiredPath, TRUE, &dummyChg, &dummySleep, &liveDpi, &liveRate);
+            wiredBatt = HidCommon_QueryCoreM1Battery(s_cachedWiredPath, TRUE, &dummyChg, &dummySleep, &liveRate);
         }
     }
 
     if (wiredFound && wiredBatt >= 0) {
-        if (liveDpi > 0) s_lastKnownDpi = liveDpi;
-        if (liveRate > 0) s_lastKnownRateHz = liveRate;
-        SavePersistedTelemetry();
+        if (liveRate > 0) {
+            s_lastKnownRateHz = liveRate;
+            SavePersistedTelemetry();
+        }
 
         int effBatt = HidCommon_FilterBatteryReading(&s_filter, wiredBatt, TRUE, REG_COREM1_KEY, NULL);
         outStatus->mode = MODE_WIRED;
@@ -124,7 +128,6 @@ BOOL DeviceCoreM1_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
         outStatus->lastKnownPercent = effBatt;
         outStatus->isCharging = (effBatt < 100);
         outStatus->isSleeping = FALSE;
-        outStatus->dpiValue = s_lastKnownDpi;
         outStatus->pollingRateHz = s_lastKnownRateHz;
         wcscpy(outStatus->modeName, L"Wired USB");
         return TRUE;
@@ -150,13 +153,12 @@ BOOL DeviceCoreM1_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
         outStatus->mode = MODE_2P4G;
         wcscpy(outStatus->modeName, L"2.4GHz Wireless");
         outStatus->isSleeping = FALSE;
-        outStatus->dpiValue = s_lastKnownDpi;
         outStatus->pollingRateHz = s_lastKnownRateHz;
 
         BOOL wirelessCharging = FALSE;
         BOOL wirelessSleeping = FALSE;
         if (allowWirelessQuery && s_cached2P4GPath[0] != '\0') {
-            dongleBatt = HidCommon_QueryCoreM1Battery(s_cached2P4GPath, FALSE, &wirelessCharging, &wirelessSleeping, NULL, NULL);
+            dongleBatt = HidCommon_QueryCoreM1Battery(s_cached2P4GPath, FALSE, &wirelessCharging, &wirelessSleeping, NULL);
         }
 
         outStatus->isSleeping = wirelessSleeping;
@@ -185,7 +187,6 @@ BOOL DeviceCoreM1_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
         outStatus->lastKnownPercent = effBatt;
         outStatus->isSleeping = FALSE;
         outStatus->isCharging = (wiredFound && effBatt < 100);
-        outStatus->dpiValue = s_lastKnownDpi;
         outStatus->pollingRateHz = s_lastKnownRateHz;
         wcscpy(outStatus->modeName, L"Bluetooth (BLE)");
         return TRUE;
@@ -198,7 +199,6 @@ BOOL DeviceCoreM1_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
     outStatus->lastKnownPercent = s_filter.lastKnownBattery;
     outStatus->isCharging = FALSE;
     outStatus->isSleeping = FALSE;
-    outStatus->dpiValue = s_lastKnownDpi;
     outStatus->pollingRateHz = s_lastKnownRateHz;
     wcscpy(outStatus->modeName, L"Disconnected");
     return FALSE;
@@ -218,32 +218,55 @@ BOOL DeviceCoreM1_HandleRawInput(HRAWINPUT hRaw, BOOL isSleeping, BOOL *outWakeT
             if (DeviceCoreM1_IsTargetDevice(raw.header.hDevice)) {
                 DWORD now = GetTickCount();
 
-                // Live polling rate measurement from packet arrival frequency
-                if (s_lastMotionTick != 0) {
-                    DWORD delta = now - s_lastMotionTick;
-                    if (delta >= 1 && delta <= 16) {
-                        s_motionIntervalSum += delta;
-                        s_motionSampleCount++;
-                        if (s_motionSampleCount >= 64) {
-                            double avgMs = (double)s_motionIntervalSum / (double)s_motionSampleCount;
-                            if (avgMs > 0.0) {
-                                int rate = (int)(1000.0 / avgMs + 0.5);
-                                if (rate >= 900) s_lastKnownRateHz = 1000;
-                                else if (rate >= 450) s_lastKnownRateHz = 500;
-                                else if (rate >= 220) s_lastKnownRateHz = 250;
-                                else if (rate >= 100) s_lastKnownRateHz = 125;
+                // One-shot passive high-precision polling rate measurement (first 32 motion packets only)
+                if (s_measureRateNeeded && (raw.data.mouse.lLastX != 0 || raw.data.mouse.lLastY != 0)) {
+                    LARGE_INTEGER qpcNow;
+                    QueryPerformanceCounter(&qpcNow);
+                    if (s_qpcFreq.QuadPart == 0) {
+                        QueryPerformanceFrequency(&s_qpcFreq);
+                    }
+                    if (s_lastMotionQpc.QuadPart != 0) {
+                        double deltaMs = (double)(qpcNow.QuadPart - s_lastMotionQpc.QuadPart) * 1000.0 / (double)s_qpcFreq.QuadPart;
+                        if (deltaMs >= 0.5 && deltaMs <= 16.0) {
+                            s_motionDeltaSumMs += deltaMs;
+                            s_motionSampleCount++;
+                            if (s_motionSampleCount >= 32) {
+                                double avgMs = s_motionDeltaSumMs / (double)s_motionSampleCount;
+                                if (avgMs > 0.0) {
+                                    int rate = (int)(1000.0 / avgMs + 0.5);
+                                    int measuredHz = 0;
+                                    if (rate >= 750) measuredHz = 1000;
+                                    else if (rate >= 350) measuredHz = 500;
+                                    else if (rate >= 180) measuredHz = 250;
+                                    else if (rate >= 80) measuredHz = 125;
+
+                                    if (measuredHz > 0 && measuredHz != s_lastKnownRateHz) {
+                                        s_lastKnownRateHz = measuredHz;
+                                        SavePersistedTelemetry();
+                                    }
+                                }
+                                // Lock measurement and go completely dormant!
+                                s_measureRateNeeded = FALSE;
+                                s_motionDeltaSumMs = 0.0;
+                                s_motionSampleCount = 0;
+                                s_lastMotionQpc.QuadPart = 0;
                             }
-                            s_motionIntervalSum = 0;
+                        } else {
+                            s_motionDeltaSumMs = 0.0;
                             s_motionSampleCount = 0;
                         }
                     }
+                    s_lastMotionQpc = qpcNow;
                 }
-                s_lastMotionTick = now;
 
                 // If currently sleeping, wake immediately!
                 if (isSleeping) {
                     if (outWakeTriggered) *outWakeTriggered = TRUE;
                     s_lastThrottledInputTick = now;
+                    s_measureRateNeeded = TRUE;
+                    s_motionSampleCount = 0;
+                    s_motionDeltaSumMs = 0.0;
+                    s_lastMotionQpc.QuadPart = 0;
                     return TRUE;
                 }
 

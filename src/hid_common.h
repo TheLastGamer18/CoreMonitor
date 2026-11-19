@@ -58,7 +58,6 @@ int HidCommon_QueryCoreM1Battery(
     BOOL isWired,
     BOOL *outIsCharging,
     BOOL *outIsSleeping,
-    int *outDpi,
     int *outPollingRate
 );
 #endif

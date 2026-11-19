@@ -26,7 +26,6 @@ typedef struct {
     BOOL isCharging;          // TRUE if plugged into USB and charging
     BOOL isSleeping;          // TRUE if dongle present but peripheral asleep/offline
     WCHAR modeName[32];
-    int dpiValue;             // e.g. 800, 1600, 3200 (or 0 if unknown)
     int pollingRateHz;        // e.g. 1000, 500, 125 (or 0 if unknown)
 } DeviceStatus;
 

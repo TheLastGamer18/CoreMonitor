@@ -453,7 +453,6 @@ int HidCommon_QueryCoreM1Battery(
     BOOL isWired,
     BOOL *outIsCharging,
     BOOL *outIsSleeping,
-    int *outDpi,
     int *outPollingRate
 ) {
     if (!devicePath || devicePath[0] == '\0') return -1;
@@ -597,31 +596,6 @@ int HidCommon_QueryCoreM1Battery(
                 }
             }
 
-            // Read Wired DPI Stage via Command 0x90 (Checksum 0x6F at byte 7)
-            if (outDpi && s_HidD_SetFeature && s_HidD_GetFeature) {
-                memset(txBuf, 0, sizeof(txBuf));
-                if (reportSize > 64) {
-                    txBuf[0] = 0x00; txBuf[1] = 0x90; txBuf[8] = 0x6F;
-                } else {
-                    txBuf[0] = 0x90; txBuf[7] = 0x6F;
-                }
-                s_HidD_SetFeature(hDev, txBuf, reportSize);
-                Sleep(15);
-                memset(rxBuf, 0, sizeof(rxBuf));
-                rxBuf[0] = 0x00;
-                if (s_HidD_GetFeature(hDev, rxBuf, reportSize)) {
-                    int offset = (rxBuf[0] == 0x00 && reportSize > 64) ? 1 : 0;
-                    if (rxBuf[offset + 0] == 0x10 || rxBuf[offset + 0] == 0x90) {
-                        int activeStage = rxBuf[offset + 1];
-                        if (activeStage >= 0 && activeStage < 8) {
-                            int dpi = (int)rxBuf[offset + 3 + (2 * activeStage)] |
-                                      ((int)rxBuf[offset + 4 + (2 * activeStage)] << 8);
-                            if (dpi >= 50 && dpi <= 32000) *outDpi = dpi;
-                        }
-                    }
-                }
-            }
-
             // Read Wired Polling Rate via Command 0x88 (Checksum 0x77 at byte 7)
             if (outPollingRate && s_HidD_SetFeature && s_HidD_GetFeature) {
                 memset(txBuf, 0, sizeof(txBuf));
@@ -723,7 +697,7 @@ BOOL HidCommon_ScanDevice(
                                     break;
                                 }
                             } else {
-                                if (caps.UsagePage >= 0xFF00) {
+                                if (caps.UsagePage >= 0xFF00 && caps.FeatureReportByteLength >= 8) {
                                     found = TRUE;
                                     if (outPath && pathMax > 0) {
                                         strncpy(outPath, detail->DevicePath, pathMax - 1);
@@ -732,7 +706,7 @@ BOOL HidCommon_ScanDevice(
                                     s_HidD_FreePreparsedData(preparsed);
                                     CloseHandle(hDev);
                                     break;
-                                } else if (caps.UsagePage != 0x01 || (caps.Usage != 0x02 && caps.Usage != 0x06)) {
+                                } else if (caps.FeatureReportByteLength >= 8 && (caps.UsagePage != 0x01 || (caps.Usage != 0x02 && caps.Usage != 0x06))) {
                                     if (fallbackPath[0] == '\0') {
                                         strncpy(fallbackPath, detail->DevicePath, sizeof(fallbackPath) - 1);
                                     }

@@ -49,7 +49,6 @@ BOOL DeviceCore75_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
     memset(outStatus, 0, sizeof(DeviceStatus));
     outStatus->batteryPercent = -1;
     outStatus->lastKnownPercent = s_filter.lastKnownBattery;
-    outStatus->dpiValue = 0;
     outStatus->pollingRateHz = 1000;
 
     // 1. Priority 1: Check Wired Mode (VID 0x36B0, PID 0x3130)

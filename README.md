@@ -45,7 +45,7 @@ No heavy runtimes, no background bloat. Standalone executables compile to ~62–
   - **Full Battery Alert:** Selectable threshold (95% or 100%) to confirm full charge.
 - **Runtime Stats & Details:**
   - Displays battery percentage, discharge/charge trends, connection mode, estimated runtime remaining, and firmware info.
-  - Live **Sensor DPI** and **Polling Rate** readout for the Core M1 mouse.
+  - Live **Polling Rate** readout for the Core M1 mouse.
 - **Hardware Safe & Ultra-Lean:**
   - Strictly read-only memory queries with zero heap allocations during active polling.
   - Pauses polling automatically when Windows is locked or monitors go to sleep.
