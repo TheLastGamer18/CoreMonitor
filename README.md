@@ -8,7 +8,7 @@ No heavy runtimes, no background bloat. Standalone executables compile to ~62–
 
 ## 3 Modular Executables
 
-- **`CoreMonitor-Core75.exe`**: Dedicated battery monitor for the URX Core75 keyboard (~62.5 KB).
+- **`CoreMonitor-Core75.exe`**: Dedicated battery monitor for the URX Core75 keyboard (~63 KB).
 - **`CoreMonitor-CoreM1.exe`**: Dedicated battery monitor for the URX Core M1 mouse (~64 KB).
 - **`CoreMonitor.exe`**: Combined dual monitor managing both devices side-by-side in your system tray (~68 KB).
 

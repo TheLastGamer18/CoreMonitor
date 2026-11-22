@@ -312,7 +312,7 @@ static void CheckDeviceAlerts(DeviceModel model, DeviceSettings *ds, NOTIFYICOND
         (percent < ds->highAlertThreshold || !ds->highBatteryAlert) && isCharging && !isDisc) {
         if (!ds->longevityAlertShownForCharge) {
             _snwprintf(titleBuf, 64, L"%s - Battery Longevity Alert", modelName);
-            _snwprintf(toastBuf, 255, L"Battery reached %d%%. Disconnect charger to protect lithium longevity.", percent);
+            _snwprintf(toastBuf, 255, L"Battery reached %d%%. Disconnect charger to protect battery.", percent);
             ShowDeviceToast(nid, titleBuf, toastBuf, NIIF_INFO);
             ds->longevityAlertShownForCharge = TRUE;
         }

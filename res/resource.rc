@@ -4,17 +4,17 @@
 1 RT_MANIFEST "app.manifest"
 
 #if defined(BUILD_TARGET_CORE75) && !defined(BUILD_TARGET_COREM1)
-#define RES_FILEDESC "Core Monitor - Core75 Keyboard"
+#define RES_FILEDESC "Core Monitor - Core75"
 #define RES_INTNAME  "CoreMonitor-Core75"
 #define RES_ORIGNAME "CoreMonitor-Core75.exe"
 #define RES_PRODNAME "Core Monitor - Core75"
 #elif defined(BUILD_TARGET_COREM1) && !defined(BUILD_TARGET_CORE75)
-#define RES_FILEDESC "Core Monitor - CoreM1 Mouse"
+#define RES_FILEDESC "Core Monitor - Core M1"
 #define RES_INTNAME  "CoreMonitor-CoreM1"
 #define RES_ORIGNAME "CoreMonitor-CoreM1.exe"
-#define RES_PRODNAME "Core Monitor - CoreM1"
+#define RES_PRODNAME "Core Monitor - Core M1"
 #else
-#define RES_FILEDESC "Core Monitor - Core75 Keyboard & CoreM1 Mouse"
+#define RES_FILEDESC "Core Monitor"
 #define RES_INTNAME  "CoreMonitor"
 #define RES_ORIGNAME "CoreMonitor.exe"
 #define RES_PRODNAME "Core Monitor"
