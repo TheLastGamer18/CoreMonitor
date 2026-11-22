@@ -16,6 +16,7 @@ typedef struct {
     int longevityAlertThreshold;       // 80 or 85 (default 85)
     BOOL highBatteryAlert;             // Full battery alert enabled
     int highAlertThreshold;            // 95 or 100 (default 100)
+    BOOL capsLockIndicator;            // Caps Lock indicator badge (Core75 only, default FALSE)
     BOOL lowAlertShownForDischarge;    // Prevents repeating low battery notifications
     BOOL longevityAlertShownForCharge; // Prevents repeating longevity battery notifications
     BOOL highAlertShownForCharge;      // Prevents repeating high battery notifications

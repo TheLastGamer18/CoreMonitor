@@ -17,8 +17,8 @@ typedef struct {
     BOOL lastWasCharging;
     DWORD accumDischargeSec;
     DWORD accumChargeSec;
-    WCHAR regSubKey[128];
-    WCHAR legacyRegSubKey[128]; // Optional fallback key for seamless upgrade
+    const WCHAR *regSubKey;
+    const WCHAR *legacyRegSubKey; // Optional fallback key for seamless upgrade
 } BatteryStatsContext;
 
 // Initialize statistics engine instance and load persisted historical data from registry
@@ -29,15 +29,6 @@ void BatteryStats_ResetSessionBaseline(BatteryStatsContext *ctx);
 
 // Record a new battery polling observation
 void BatteryStats_Record(BatteryStatsContext *ctx, int batteryPercent, BOOL isCharging, BOOL isDisconnected);
-
-// Estimates minutes remaining on battery based on historical discharge rate
-BOOL BatteryStats_GetDischargeTimeRemaining(const BatteryStatsContext *ctx, int currentPercent, int *outMinutes);
-
-// Estimates minutes until 85% battery level (for lithium longevity)
-BOOL BatteryStats_GetChargeTimeTo85(const BatteryStatsContext *ctx, int currentPercent, int *outMinutes);
-
-// Estimates minutes until 100% battery level
-BOOL BatteryStats_GetChargeTimeToFull(const BatteryStatsContext *ctx, int currentPercent, int *outMinutes);
 
 // Formats a user-friendly string describing the battery estimate (e.g., "~18h 30m remaining", "~45m to 85%")
 void BatteryStats_FormatRemainingText(

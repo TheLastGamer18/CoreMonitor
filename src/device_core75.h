@@ -30,7 +30,12 @@ void DeviceCore75_ForceDirectNextPoll(void);
 void DeviceCore75_ResetBaseline(void);
 
 // Raw Input handling: returns TRUE if input originated from physical URX Core75 keyboard
-BOOL DeviceCore75_HandleRawInput(HRAWINPUT hRaw, BOOL *outWakeTriggered);
+// outWakeTriggered: set to TRUE if input woke keyboard from sleep
+// outCapsChanged: set to TRUE if Caps Lock state toggled on this input
+BOOL DeviceCore75_HandleRawInput(HRAWINPUT hRaw, BOOL *outWakeTriggered, BOOL *outCapsChanged);
+
+// Returns TRUE if Caps Lock is currently toggled ON for Core75
+BOOL DeviceCore75_IsCapsLock(void);
 
 // Direct check if a raw input device handle matches cached Core75 handles
 BOOL DeviceCore75_IsTargetDevice(HANDLE hDevice);

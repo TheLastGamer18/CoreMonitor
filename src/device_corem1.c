@@ -168,13 +168,14 @@ BOOL DeviceCoreM1_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
             effBatt = HidCommon_FilterBatteryReading(&s_filter, dongleBatt, s_filter.inferred2P4GCharging || wirelessCharging || wiredFound, REG_COREM1_KEY, NULL);
             outStatus->batteryPercent = effBatt;
             outStatus->lastKnownPercent = effBatt;
+            outStatus->isCharging = HidCommon_UpdateChargeTrend(&s_filter, effBatt, wirelessCharging, wiredFound);
         } else {
             outStatus->batteryPercent = effBatt;
             outStatus->lastKnownPercent = effBatt;
             s_filter.forceDirectReading = FALSE;
+            outStatus->isCharging = (s_filter.inferred2P4GCharging || wirelessCharging || wiredFound) && (effBatt >= 0 && effBatt < 100);
         }
 
-        outStatus->isCharging = HidCommon_UpdateChargeTrend(&s_filter, effBatt, wirelessCharging, wiredFound);
         return (dongleBatt > 0);
     }
 
@@ -194,6 +195,10 @@ BOOL DeviceCoreM1_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
 
     // 4. Disconnected
     s_filter.forceDirectReading = FALSE;
+    s_filter.inferred2P4GCharging = FALSE;
+    s_filter.chargeConfirmationCount = 0;
+    s_filter.flatChargeCycles = 0;
+    s_filter.prev2P4GBatt = -1;
     outStatus->mode = MODE_DISCONNECTED;
     outStatus->batteryPercent = -1;
     outStatus->lastKnownPercent = s_filter.lastKnownBattery;

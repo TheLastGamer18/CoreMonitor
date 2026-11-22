@@ -50,18 +50,17 @@ static HidD_SetFeature_t s_HidD_SetFeature = NULL;
 
 #if defined(BUILD_TARGET_CORE75) || (!defined(BUILD_TARGET_COREM1))
 typedef BOOL (WINAPI *CancelIoEx_t)(HANDLE, LPOVERLAPPED);
-static CancelIoEx_t s_fnCancelIoEx = NULL;
+static CancelIoEx_t s_pfnCancelIoEx = NULL;
 
 static void SafeCancelIo(HANDLE hDev, LPOVERLAPPED lpOverlapped) {
-    if (s_fnCancelIoEx) {
-        s_fnCancelIoEx(hDev, lpOverlapped);
+    if (s_pfnCancelIoEx) {
+        s_pfnCancelIoEx(hDev, lpOverlapped);
     } else {
         CancelIo(hDev);
     }
 }
 #endif
 
-static HMODULE s_hSetup = NULL;
 typedef GUID DEVPROPGUID;
 typedef ULONG DEVPROPID;
 typedef struct _DEVPROPKEY {
@@ -105,16 +104,18 @@ BOOL HidCommon_Init(void) {
             s_HidD_SetFeature = (HidD_SetFeature_t)GetProcAddress(s_hHid, "HidD_SetFeature");
         }
     }
-    if (!s_hSetup) {
-        s_hSetup = LoadLibraryA("setupapi.dll");
-        if (s_hSetup) {
-            s_fnGetDevicePropertyW = (SetupDiGetDevicePropertyW_t)GetProcAddress(s_hSetup, "SetupDiGetDevicePropertyW");
+    if (!s_fnGetDevicePropertyW) {
+        HMODULE hSetup = GetModuleHandleA("setupapi.dll");
+        if (hSetup) {
+            s_fnGetDevicePropertyW = (SetupDiGetDevicePropertyW_t)GetProcAddress(hSetup, "SetupDiGetDevicePropertyW");
         }
     }
 #if defined(BUILD_TARGET_CORE75) || (!defined(BUILD_TARGET_COREM1))
-    HMODULE hKernel = GetModuleHandleA("kernel32.dll");
-    if (hKernel) {
-        s_fnCancelIoEx = (CancelIoEx_t)GetProcAddress(hKernel, "CancelIoEx");
+    if (!s_pfnCancelIoEx) {
+        HMODULE hKernel = GetModuleHandleA("kernel32.dll");
+        if (hKernel) {
+            s_pfnCancelIoEx = (CancelIoEx_t)GetProcAddress(hKernel, "CancelIoEx");
+        }
     }
 #endif
     return (s_hHid != NULL);
@@ -124,10 +125,6 @@ void HidCommon_Cleanup(void) {
     if (s_hHid) {
         FreeLibrary(s_hHid);
         s_hHid = NULL;
-    }
-    if (s_hSetup) {
-        FreeLibrary(s_hSetup);
-        s_hSetup = NULL;
     }
 }
 
@@ -212,18 +209,11 @@ BOOL HidCommon_IsTargetDevice(
 // -----------------------------------------------------------------------------
 // Unified Battery Filtering & Registry Persistence
 // -----------------------------------------------------------------------------
-static void SaveBatteryToReg(int percent, const WCHAR *regKey, const WCHAR *legacyKey) {
+static void SaveBatteryToReg(int percent, const WCHAR *regKey) {
     if (percent < 0 || percent > 100) return;
-    HKEY hKey;
     if (regKey && regKey[0] != L'\0') {
+        HKEY hKey;
         if (RegCreateKeyExW(HKEY_CURRENT_USER, regKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-            DWORD val = (DWORD)percent;
-            RegSetValueExW(hKey, L"LastKnownBattery", 0, REG_DWORD, (const BYTE*)&val, sizeof(DWORD));
-            RegCloseKey(hKey);
-        }
-    }
-    if (legacyKey && legacyKey[0] != L'\0') {
-        if (RegCreateKeyExW(HKEY_CURRENT_USER, legacyKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
             DWORD val = (DWORD)percent;
             RegSetValueExW(hKey, L"LastKnownBattery", 0, REG_DWORD, (const BYTE*)&val, sizeof(DWORD));
             RegCloseKey(hKey);
@@ -262,9 +252,6 @@ void HidCommon_ResetFilter(DeviceFilterState *st) {
     st->pendingOutlierPercent = -1;
     st->consecutiveRebounds = 0;
     st->freshBaselineNeeded = TRUE;
-    st->prev2P4GBatt = -1;
-    st->inferred2P4GCharging = FALSE;
-    st->flatChargeCycles = 0;
 }
 
 int HidCommon_FilterBatteryReading(
@@ -283,7 +270,7 @@ int HidCommon_FilterBatteryReading(
         st->pendingOutlierPercent = -1;
         st->consecutiveRebounds = 0;
         st->lastKnownBattery = rawPercent;
-        SaveBatteryToReg(rawPercent, regKey, legacyKey);
+        SaveBatteryToReg(rawPercent, regKey);
         return rawPercent;
     }
 
@@ -319,7 +306,7 @@ int HidCommon_FilterBatteryReading(
     }
 
     st->lastKnownBattery = rawPercent;
-    SaveBatteryToReg(rawPercent, regKey, legacyKey);
+    SaveBatteryToReg(rawPercent, regKey);
     return rawPercent;
 }
 
@@ -330,28 +317,60 @@ BOOL HidCommon_UpdateChargeTrend(
     BOOL wiredConnected
 ) {
     if (!st) return FALSE;
+
+    if (wiredConnected || liveChargingIndicator) {
+        st->inferred2P4GCharging = TRUE;
+        st->chargeConfirmationCount = 0;
+        st->flatChargeCycles = 0;
+        st->prev2P4GBatt = effBatt;
+        return (effBatt >= 0 && effBatt < 100);
+    }
+
     if (effBatt >= 0) {
         if (st->prev2P4GBatt >= 0) {
-            if (effBatt > st->prev2P4GBatt) {
-                st->inferred2P4GCharging = TRUE;
-                st->flatChargeCycles = 0;
-            } else if (effBatt < st->prev2P4GBatt) {
-                st->inferred2P4GCharging = FALSE;
-                st->flatChargeCycles = 0;
-            } else if (st->inferred2P4GCharging) {
-                if (++st->flatChargeCycles >= 3) {
-                    st->inferred2P4GCharging = FALSE;
+            int delta = effBatt - st->prev2P4GBatt;
+            if (delta > 0) {
+                if (st->inferred2P4GCharging) {
                     st->flatChargeCycles = 0;
+                } else if (delta >= 2) {
+                    st->inferred2P4GCharging = TRUE;
+                    st->chargeConfirmationCount = 0;
+                    st->flatChargeCycles = 0;
+                } else {
+                    if (++st->chargeConfirmationCount >= 2) {
+                        st->inferred2P4GCharging = TRUE;
+                        st->chargeConfirmationCount = 0;
+                        st->flatChargeCycles = 0;
+                    }
+                }
+            } else if (delta < 0) {
+                st->inferred2P4GCharging = FALSE;
+                st->chargeConfirmationCount = 0;
+                st->flatChargeCycles = 0;
+            } else {
+                if (st->inferred2P4GCharging) {
+                    if (++st->flatChargeCycles >= 30) {
+                        st->inferred2P4GCharging = FALSE;
+                        st->flatChargeCycles = 0;
+                    }
+                } else {
+                    if (st->chargeConfirmationCount > 0 && ++st->flatChargeCycles >= 2) {
+                        st->chargeConfirmationCount = 0;
+                        st->flatChargeCycles = 0;
+                    }
                 }
             }
         }
         st->prev2P4GBatt = effBatt;
     }
+
     if (effBatt >= 100) {
         st->inferred2P4GCharging = FALSE;
+        st->chargeConfirmationCount = 0;
         st->flatChargeCycles = 0;
     }
-    return (liveChargingIndicator || wiredConnected || st->inferred2P4GCharging) && (effBatt >= 0 && effBatt < 100);
+
+    return st->inferred2P4GCharging && (effBatt >= 0 && effBatt < 100);
 }
 
 // -----------------------------------------------------------------------------

@@ -30,7 +30,8 @@ HICON IconGen_CreateBatteryIcon(
     BOOL isDisconnected,         // TRUE if completely disconnected
     CenterIconStyle centerStyle, // GLYPH, PERCENT, or RING_ONLY
     DeviceModel model,           // MODEL_CORE75 or MODEL_COREM1
-    BOOL lightTaskbar            // TRUE for light taskbar, FALSE for dark
+    BOOL lightTaskbar,           // TRUE for light taskbar, FALSE for dark
+    BOOL isCapsLockOn            // TRUE to render padlock badge on Core75
 );
 
 #ifdef __cplusplus

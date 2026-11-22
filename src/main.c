@@ -22,10 +22,6 @@
 #include "device_corem1.h"
 #endif
 
-#ifndef PI
-#define PI 3.14159265358979323846f
-#endif
-
 #ifndef WM_DPICHANGED
 #define WM_DPICHANGED 0x02E0
 #endif
@@ -62,6 +58,8 @@
 #define IDM_FULL_ENABLE     2040
 #define IDM_FULL_95         2041
 #define IDM_FULL_100        2042
+
+#define IDM_CAPSLOCK_INDICATOR 2050
 
 #define IDM_AUTOSTART       2060
 #define IDM_EXIT            2062
@@ -367,6 +365,13 @@ static void UpdateTrayIcon(DeviceModel model) {
     BOOL isDisconnected = (st->mode == MODE_DISCONNECTED);
     int effPercent = (st->batteryPercent >= 0) ? st->batteryPercent : st->lastKnownPercent;
 
+    BOOL isCapsLockOn = FALSE;
+#if defined(BUILD_TARGET_CORE75)
+    if (model == MODEL_CORE75 && g_Settings.core75.capsLockIndicator) {
+        isCapsLockOn = st->isCapsLock;
+    }
+#endif
+
     HICON hNewIcon = IconGen_CreateBatteryIcon(
         effPercent,
         st->isCharging,
@@ -375,7 +380,8 @@ static void UpdateTrayIcon(DeviceModel model) {
         isDisconnected,
         style,
         model,
-        lightTaskbar
+        lightTaskbar,
+        isCapsLockOn
     );
 
     if (hNewIcon) {
@@ -578,7 +584,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             const BatteryStatsContext *stats = NULL;
             const DeviceSettings *ds = NULL;
             const WCHAR *titleStr = L"URX Peripheral";
-            const WCHAR *subTitleStr = L"Device Telemetry \x2022 v2.0.1";
+            const WCHAR *subTitleStr = L"Device Telemetry \x2022 v2.1.0";
             BOOL isFiltering = FALSE;
 
 #if defined(BUILD_TARGET_CORE75)
@@ -587,7 +593,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
                 stats = &s_statsCore75;
                 ds = &g_Settings.core75;
                 titleStr = L"URX Core75";
-                subTitleStr = L"Mechanical Keyboard Telemetry \x2022 v2.0.1";
+                subTitleStr = L"Mechanical Keyboard Telemetry \x2022 v2.1.0";
                 isFiltering = DeviceCore75_IsFilteringTransient();
             }
 #endif
@@ -597,7 +603,7 @@ static LRESULT CALLBACK DetailsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
                 stats = &s_statsCoreM1;
                 ds = &g_Settings.corem1;
                 titleStr = L"URX Core M1";
-                subTitleStr = L"Wireless Gaming Mouse Telemetry \x2022 v2.0.1";
+                subTitleStr = L"Wireless Gaming Mouse Telemetry \x2022 v2.1.0";
                 isFiltering = DeviceCoreM1_IsFilteringTransient();
             }
 #endif
@@ -1202,6 +1208,13 @@ static void ShowContextMenu(HWND hWnd, DeviceModel model) {
     _snwprintf(subMenuLabel, 64, L"Full Battery Alert (%d%%)", highThresh);
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFullMenu, subMenuLabel);
 
+#if defined(BUILD_TARGET_CORE75)
+    if (model == MODEL_CORE75) {
+        UINT capsFlags = MF_STRING | (g_Settings.core75.capsLockIndicator ? MF_CHECKED : MF_UNCHECKED);
+        AppendMenuW(hMenu, capsFlags, IDM_CAPSLOCK_INDICATOR, L"Caps Lock Indicator");
+    }
+#endif
+
     // Run on startup
     UINT autoFlags = MF_STRING | (g_Settings.startWithWindows ? MF_CHECKED : MF_UNCHECKED);
     AppendMenuW(hMenu, autoFlags, IDM_AUTOSTART, L"Start with Windows");
@@ -1295,6 +1308,15 @@ static void ShowContextMenu(HWND hWnd, DeviceModel model) {
             if (ds) ds->highAlertThreshold = 100;
             goto save_and_redraw;
 
+        case IDM_CAPSLOCK_INDICATOR:
+#if defined(BUILD_TARGET_CORE75)
+            if (model == MODEL_CORE75) {
+                g_Settings.core75.capsLockIndicator = !g_Settings.core75.capsLockIndicator;
+                UpdateTrayIcon(MODEL_CORE75);
+            }
+#endif
+            goto save_and_redraw;
+
         case IDM_AUTOSTART:
             Settings_SetAutostart(!g_Settings.startWithWindows);
             goto save_and_redraw;
@@ -1384,8 +1406,12 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             HRAWINPUT hRaw = (HRAWINPUT)lParam;
 #if defined(BUILD_TARGET_CORE75)
             BOOL kbWake = FALSE;
-            if (DeviceCore75_HandleRawInput(hRaw, &kbWake)) {
+            BOOL capsChanged = FALSE;
+            if (DeviceCore75_HandleRawInput(hRaw, &kbWake, &capsChanged)) {
                 s_lastCore75InputTick = GetTickCount();
+                if (capsChanged) {
+                    s_statusCore75.isCapsLock = DeviceCore75_IsCapsLock();
+                }
                 if ((s_statusCore75.isSleeping || s_lastCore75RadioQueryTick == 0) && s_statusCore75.mode == MODE_2P4G) {
                     s_statusCore75.isSleeping = FALSE;
                     UpdateTrayIcon(MODEL_CORE75);
@@ -1394,6 +1420,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                     }
                     s_lastCore75RadioQueryTick = 0;
                     SetTimer(hWnd, IDT_POLL_TIMER_CORE75, 150, NULL);
+                } else if (capsChanged && g_Settings.core75.capsLockIndicator) {
+                    UpdateTrayIcon(MODEL_CORE75);
                 }
             }
 #endif

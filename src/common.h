@@ -3,6 +3,10 @@
 
 #include <windows.h>
 
+#ifndef PI
+#define PI 3.14159265358979323846f
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,6 +31,7 @@ typedef struct {
     BOOL isSleeping;          // TRUE if dongle present but peripheral asleep/offline
     WCHAR modeName[32];
     int pollingRateHz;        // e.g. 1000, 500, 125 (or 0 if unknown)
+    BOOL isCapsLock;          // TRUE if Caps Lock toggle is ON (Core75)
 } DeviceStatus;
 
 #define MAX_CACHED_TARGET_DEVICES 4
@@ -49,6 +54,7 @@ typedef struct {
     int prev2P4GBatt;
     BOOL inferred2P4GCharging;
     int flatChargeCycles;
+    int chargeConfirmationCount;
 } DeviceFilterState;
 
 #ifdef __cplusplus

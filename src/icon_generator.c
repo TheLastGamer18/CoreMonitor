@@ -1,10 +1,6 @@
 #include "icon_generator.h"
 #include <math.h>
 
-#ifndef PI
-#define PI 3.14159265358979323846f
-#endif
-
 // High-contrast, maximum-legibility 3x7 bitmap font for digits 0-9
 // 3 bits wide per row (bits 2..0), 7 rows tall (rows 4..10 in 16x16 grid)
 static const unsigned char DIGIT_FONT_3X7[10][7] = {
@@ -138,7 +134,8 @@ HICON IconGen_CreateBatteryIcon(
     BOOL isDisconnected,
     CenterIconStyle centerStyle,
     DeviceModel model,
-    BOOL lightTaskbar
+    BOOL lightTaskbar,
+    BOOL isCapsLockOn
 ) {
     int size = IconGen_GetTargetIconSize();
 
@@ -355,6 +352,53 @@ HICON IconGen_CreateBatteryIcon(
             }
         }
     }
+
+    // 3. RENDER CAPS LOCK BADGE (URX Core75 bottom-right corner)
+#if defined(BUILD_TARGET_CORE75)
+    if (model == MODEL_CORE75 && isCapsLockOn) {
+        // High-contrast, bold silver padlock badge (cols 11..15, rows 10..15)
+        // Prominently sized for clear taskbar visibility while preserving glyph/percent clarity
+
+        // Subtle dark outline/shadow for sharp separation
+        DrawGridCell(pixels, size, 13, 9, 0, 0, 0, 0.55f);
+        DrawGridCell(pixels, size, 14, 9, 0, 0, 0, 0.55f);
+        DrawGridCell(pixels, size, 10, 11, 0, 0, 0, 0.55f);
+        DrawGridCell(pixels, size, 10, 12, 0, 0, 0, 0.55f);
+        DrawGridCell(pixels, size, 10, 13, 0, 0, 0, 0.55f);
+        DrawGridCell(pixels, size, 10, 14, 0, 0, 0, 0.55f);
+        DrawGridCell(pixels, size, 10, 15, 0, 0, 0, 0.55f);
+
+        // Red palette:
+        // Dark taskbar: high-contrast vivid red body, bright coral-red shackle
+        // Light taskbar: bold deep crimson
+        unsigned char shackleR = lightTaskbar ? 220 : 255;
+        unsigned char shackleG = lightTaskbar ? 45  : 105;
+        unsigned char shackleB = lightTaskbar ? 45  : 105;
+
+        unsigned char bodyR = lightTaskbar ? 195 : 248;
+        unsigned char bodyG = lightTaskbar ? 20  : 55;
+        unsigned char bodyB = lightTaskbar ? 20  : 55;
+
+        // Row 10: Shackle arch top (cols 12, 13, 14)
+        DrawGridCell(pixels, size, 12, 10, shackleR, shackleG, shackleB, 1.0f);
+        DrawGridCell(pixels, size, 13, 10, shackleR, shackleG, shackleB, 1.0f);
+        DrawGridCell(pixels, size, 14, 10, shackleR, shackleG, shackleB, 1.0f);
+
+        // Row 11: Shackle outer legs (cols 11, 15) and dark inner opening (cols 12, 13, 14)
+        DrawGridCell(pixels, size, 11, 11, shackleR, shackleG, shackleB, 1.0f);
+        DrawGridCell(pixels, size, 12, 11, 0, 0, 0, 0.75f);
+        DrawGridCell(pixels, size, 13, 11, 0, 0, 0, 0.75f);
+        DrawGridCell(pixels, size, 14, 11, 0, 0, 0, 0.75f);
+        DrawGridCell(pixels, size, 15, 11, shackleR, shackleG, shackleB, 1.0f);
+
+        // Rows 12..15: Solid bold padlock body (cols 11..15)
+        for (int r = 12; r <= 15; r++) {
+            for (int c = 11; c <= 15; c++) {
+                DrawGridCell(pixels, size, c, r, bodyR, bodyG, bodyB, 1.0f);
+            }
+        }
+    }
+#endif
 
     HBITMAP hMono = CreateBitmap(size, size, 1, 1, NULL);
     ICONINFO ii = {0};

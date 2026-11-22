@@ -18,6 +18,7 @@ AppSettings g_Settings = {
         .longevityAlertThreshold = 85,
         .highBatteryAlert = TRUE,
         .highAlertThreshold = 100,
+        .capsLockIndicator = FALSE,
         .lowAlertShownForDischarge = FALSE,
         .longevityAlertShownForCharge = FALSE,
         .highAlertShownForCharge = FALSE
@@ -32,6 +33,7 @@ AppSettings g_Settings = {
         .longevityAlertThreshold = 85,
         .highBatteryAlert = TRUE,
         .highAlertThreshold = 100,
+        .capsLockIndicator = FALSE,
         .lowAlertShownForDischarge = FALSE,
         .longevityAlertShownForCharge = FALSE,
         .highAlertShownForCharge = FALSE
@@ -85,6 +87,11 @@ static void LoadDeviceSettings(DeviceSettings *ds, const WCHAR *subKey, const WC
                 if (val == 95 || val == 100) ds->highAlertThreshold = (int)val;
                 loadedAny = TRUE;
             }
+            size = sizeof(val);
+            if (RegQueryValueExW(hKey, L"CapsLockIndicator", NULL, NULL, (LPBYTE)&val, &size) == ERROR_SUCCESS) {
+                ds->capsLockIndicator = (val != 0);
+                loadedAny = TRUE;
+            }
             RegCloseKey(hKey);
             if (loadedAny) break;
         }
@@ -108,6 +115,8 @@ static void SaveDeviceSettings(const DeviceSettings *ds, const WCHAR *subKey) {
         RegSetValueExW(hKey, L"HighBatteryAlert", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         val = (DWORD)ds->highAlertThreshold;
         RegSetValueExW(hKey, L"HighAlertThreshold", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
+        val = ds->capsLockIndicator ? 1 : 0;
+        RegSetValueExW(hKey, L"CapsLockIndicator", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         RegCloseKey(hKey);
     }
 }

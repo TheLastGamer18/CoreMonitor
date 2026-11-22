@@ -55,23 +55,16 @@ void BatteryStats_Init(BatteryStatsContext *ctx, const WCHAR *regSubKey, const W
     ctx->dischargeRatePerHour = defDischarge;
     ctx->chargeRatePerHour = defCharge;
     ctx->baselinePercent = -1;
-
-    if (regSubKey) {
-        wcsncpy(ctx->regSubKey, regSubKey, 127);
-        ctx->regSubKey[127] = L'\0';
-    }
-    if (legacyRegKey) {
-        wcsncpy(ctx->legacyRegSubKey, legacyRegKey, 127);
-        ctx->legacyRegSubKey[127] = L'\0';
-    }
+    ctx->regSubKey = regSubKey;
+    ctx->legacyRegSubKey = legacyRegKey;
 
     // Try primary key first
-    if (ctx->regSubKey[0] != L'\0') {
+    if (ctx->regSubKey && ctx->regSubKey[0] != L'\0') {
         LoadFromKey(ctx, ctx->regSubKey);
     }
 
     // If primary had no learned rates, check fallback legacy key
-    if (!ctx->hasLearnedDischarge && ctx->legacyRegSubKey[0] != L'\0') {
+    if (!ctx->hasLearnedDischarge && ctx->legacyRegSubKey && ctx->legacyRegSubKey[0] != L'\0') {
         LoadFromKey(ctx, ctx->legacyRegSubKey);
     }
 }
@@ -97,12 +90,8 @@ static void SaveToKey(const BatteryStatsContext *ctx, const WCHAR *keyPath) {
 
 void BatteryStats_Save(BatteryStatsContext *ctx) {
     if (!ctx) return;
-    if (ctx->regSubKey[0] != L'\0') {
+    if (ctx->regSubKey && ctx->regSubKey[0] != L'\0') {
         SaveToKey(ctx, ctx->regSubKey);
-    }
-    // Also mirror to legacy key if defined (for Core75 backward compatibility)
-    if (ctx->legacyRegSubKey[0] != L'\0') {
-        SaveToKey(ctx, ctx->legacyRegSubKey);
     }
 }
 
@@ -209,7 +198,7 @@ void BatteryStats_Record(BatteryStatsContext *ctx, int batteryPercent, BOOL isCh
     }
 }
 
-BOOL BatteryStats_GetDischargeTimeRemaining(const BatteryStatsContext *ctx, int currentPercent, int *outMinutes) {
+static BOOL BatteryStats_GetDischargeTimeRemaining(const BatteryStatsContext *ctx, int currentPercent, int *outMinutes) {
     if (!ctx || !outMinutes || currentPercent <= 0 || ctx->dischargeRatePerHour <= 0.005) {
         if (outMinutes) *outMinutes = 0;
         return FALSE;
@@ -238,11 +227,11 @@ static BOOL CalcTimeToPercent(const BatteryStatsContext *ctx, int currentPercent
     return TRUE;
 }
 
-BOOL BatteryStats_GetChargeTimeTo85(const BatteryStatsContext *ctx, int currentPercent, int *outMinutes) {
+static BOOL BatteryStats_GetChargeTimeTo85(const BatteryStatsContext *ctx, int currentPercent, int *outMinutes) {
     return CalcTimeToPercent(ctx, currentPercent, 85, outMinutes);
 }
 
-BOOL BatteryStats_GetChargeTimeToFull(const BatteryStatsContext *ctx, int currentPercent, int *outMinutes) {
+static BOOL BatteryStats_GetChargeTimeToFull(const BatteryStatsContext *ctx, int currentPercent, int *outMinutes) {
     return CalcTimeToPercent(ctx, currentPercent, 100, outMinutes);
 }
 

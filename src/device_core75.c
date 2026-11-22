@@ -19,10 +19,12 @@ static char s_cached2P4GPath[MAX_PATH * 2] = {0};
 static DeviceFilterState s_filter = {0};
 static DeviceHandleCache s_handleCache = {0};
 static const char *s_core75Pids[] = { "3130", "3002" };
+static BOOL s_isCapsLockOn = FALSE;
 
 void DeviceCore75_Init(void) {
     HidCommon_InitFilter(&s_filter, REG_CORE75_KEY, REG_LEGACY_KEY);
     HidCommon_ClearHandleCache(&s_handleCache);
+    s_isCapsLockOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
 }
 
 void DeviceCore75_InvalidateCache(void) {
@@ -50,6 +52,8 @@ BOOL DeviceCore75_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
     outStatus->batteryPercent = -1;
     outStatus->lastKnownPercent = s_filter.lastKnownBattery;
     outStatus->pollingRateHz = 1000;
+    s_isCapsLockOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+    outStatus->isCapsLock = s_isCapsLockOn;
 
     // 1. Priority 1: Check Wired Mode (VID 0x36B0, PID 0x3130)
     int wiredBatt = -1;
@@ -115,13 +119,14 @@ BOOL DeviceCore75_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
             effBatt = HidCommon_FilterBatteryReading(&s_filter, dongleBatt, s_filter.inferred2P4GCharging || wirelessCharging || wiredFound, REG_CORE75_KEY, REG_LEGACY_KEY);
             outStatus->batteryPercent = effBatt;
             outStatus->lastKnownPercent = effBatt;
+            outStatus->isCharging = HidCommon_UpdateChargeTrend(&s_filter, effBatt, wirelessCharging, wiredFound);
         } else {
             outStatus->batteryPercent = effBatt;
             outStatus->lastKnownPercent = effBatt;
             s_filter.forceDirectReading = FALSE;
+            outStatus->isCharging = (s_filter.inferred2P4GCharging || wiredFound) && (effBatt >= 0 && effBatt < 100);
         }
 
-        outStatus->isCharging = HidCommon_UpdateChargeTrend(&s_filter, effBatt, wirelessCharging, wiredFound);
         return (dongleBatt >= 0);
     }
 
@@ -140,6 +145,10 @@ BOOL DeviceCore75_Poll(DeviceStatus *outStatus, BOOL allowWirelessQuery) {
 
     // 4. Priority 4: Disconnected
     s_filter.forceDirectReading = FALSE;
+    s_filter.inferred2P4GCharging = FALSE;
+    s_filter.chargeConfirmationCount = 0;
+    s_filter.flatChargeCycles = 0;
+    s_filter.prev2P4GBatt = -1;
     outStatus->mode = MODE_DISCONNECTED;
     outStatus->batteryPercent = -1;
     outStatus->lastKnownPercent = s_filter.lastKnownBattery;
@@ -153,18 +162,31 @@ BOOL DeviceCore75_IsTargetDevice(HANDLE hDevice) {
     return HidCommon_IsTargetDevice(&s_handleCache, hDevice, "36b0", s_core75Pids, 2);
 }
 
-BOOL DeviceCore75_HandleRawInput(HRAWINPUT hRaw, BOOL *outWakeTriggered) {
+BOOL DeviceCore75_HandleRawInput(HRAWINPUT hRaw, BOOL *outWakeTriggered, BOOL *outCapsChanged) {
     if (outWakeTriggered) *outWakeTriggered = FALSE;
+    if (outCapsChanged) *outCapsChanged = FALSE;
     RAWINPUT raw;
     UINT dwSize = sizeof(RAWINPUT);
     if (GetRawInputData(hRaw, RID_INPUT, &raw, &dwSize, sizeof(RAWINPUTHEADER)) != (UINT)-1) {
         if (raw.header.dwType == RIM_TYPEKEYBOARD) {
             if (DeviceCore75_IsTargetDevice(raw.header.hDevice)) {
+                BOOL newCaps = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+                if (raw.data.keyboard.VKey == VK_CAPITAL && !(raw.data.keyboard.Flags & RI_KEY_BREAK)) {
+                    newCaps = !s_isCapsLockOn;
+                }
+                if (newCaps != s_isCapsLockOn) {
+                    s_isCapsLockOn = newCaps;
+                    if (outCapsChanged) *outCapsChanged = TRUE;
+                }
                 return TRUE;
             }
         }
     }
     return FALSE;
+}
+
+BOOL DeviceCore75_IsCapsLock(void) {
+    return s_isCapsLockOn;
 }
 
 void DeviceCore75_Cleanup(void) {
